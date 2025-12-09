@@ -5,11 +5,11 @@ package.domain = org.magpro
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,ttf
 version = 7.1.0
-requirements = python3,kivy,kivymd,requests,urllib3,pillow,arabic-reshaper,python-bidi==0.6.7,six,future,certifi
+requirements = python3,kivy,kivymd,requests,urllib3,pillow,arabic-reshaper,python-bidi==0.4.2,six,future,certifi,chardet,idna
 icon.filename = apk_icon.png
 orientation = portrait
 fullscreen = 0
-android.permissions = INTERNET, ACCESS_NETWORK_STATE, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE
+android.permissions = INTERNET, ACCESS_NETWORK_STATE, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE, BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_CONNECT, BLUETOOTH_SCAN, ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION
 android.api = 33
 android.minapi = 21
 android.accept_sdk_license = True
