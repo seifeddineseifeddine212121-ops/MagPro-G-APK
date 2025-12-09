@@ -1,6 +1,7 @@
 from bidi.algorithm import get_display
 from datetime import datetime, timedelta
 from kivy.clock import Clock
+from kivy.clock import mainthread
 from kivy.config import Config
 from kivy.core.text import LabelBase
 from kivy.core.window import Window
@@ -12,6 +13,7 @@ from kivy.storage.jsonstore import JsonStore
 from kivy.uix.recycleboxlayout import RecycleBoxLayout
 from kivy.uix.recycleview import RecycleView
 from kivy.uix.recycleview.views import RecycleDataViewBehavior
+from kivy.utils import platform
 from kivymd import fonts_path
 from kivymd.app import MDApp
 from kivymd.uix.boxlayout import MDBoxLayout
@@ -35,8 +37,16 @@ import json
 import os
 import random
 import re
+import socket
 import sys
+import threading
 import time
+
+if platform == 'android':
+    from jnius import autoclass
+    BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+    BluetoothDevice = autoclass('android.bluetooth.BluetoothDevice')
+    UUID = autoclass('java.util.UUID')
 
 app_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -261,6 +271,230 @@ class StockApp(MDApp):
         except:
             return str(text)
 
+    def open_bluetooth_selector(self, instance):
+        if platform != 'android':
+            self.notify('Disponible uniquement sur Android', 'error')
+            return
+        try:
+            adapter = BluetoothAdapter.getDefaultAdapter()
+            if not adapter:
+                self.notify('Bluetooth non disponible sur cet appareil', 'error')
+                return
+            if not adapter.isEnabled():
+                self.notify('Veuillez activer le Bluetooth !', 'error')
+                return
+            paired_devices = adapter.getBondedDevices().toArray()
+            content = MDBoxLayout(orientation='vertical', size_hint_y=None, height=dp(400))
+            scroll = MDScrollView()
+            list_layout = MDList()
+            if not paired_devices:
+                list_layout.add_widget(OneLineListItem(text='Aucun appareil associé (Paired)'))
+                list_layout.add_widget(OneLineListItem(text="Veuillez appairer l'imprimante dans les paramètres Android"))
+            else:
+                for device in paired_devices:
+                    d_name = device.getName()
+                    d_mac = device.getAddress()
+                    item = TwoLineAvatarIconListItem(text=d_name, secondary_text=d_mac, on_release=lambda x, name=d_name, mac=d_mac: self.select_printer(name, mac))
+                    item.add_widget(IconLeftWidget(icon='printer-wireless'))
+                    list_layout.add_widget(item)
+            scroll.add_widget(list_layout)
+            content.add_widget(scroll)
+            self.bt_dialog = MDDialog(title='Choisir Imprimante', type='custom', content_cls=content, buttons=[MDFlatButton(text='ANNULER', on_release=lambda x: self.bt_dialog.dismiss())])
+            self.bt_dialog.open()
+        except Exception as e:
+            error_msg = str(e).lower()
+            if 'permission' in error_msg or 'security' in error_msg:
+                self.notify('Erreur : Accès Bluetooth refusé par Android', 'error')
+                self.request_android_permissions()
+            else:
+                self.notify(f'Erreur Bluetooth : {e}', 'error')
+        except Exception as e:
+            err_msg = str(e).lower()
+            if 'security' in err_msg or 'permission' in err_msg:
+                self.notify('خطأ صلاحيات: اسمح للتطبيق بالوصول للبلوتوث من إعدادات الهاتف', 'error')
+            else:
+                self.notify(f'خطأ: {e}', 'error')
+
+    def select_printer(self, name, mac):
+        if hasattr(self, 'printer_name_field'):
+            self.printer_name_field.text = name
+            self.printer_name_field.helper_text = f'ID: {mac}'
+        self.temp_selected_mac = mac
+        if self.bt_dialog:
+            self.bt_dialog.dismiss()
+        self.notify(f'Sélectionné: {name}', 'success')
+
+    def print_ticket_bluetooth(self, transaction_data):
+        if platform != 'android':
+            return
+        if not self.store.exists('printer_config'):
+            return
+        config = self.store.get('printer_config')
+        target_mac = config.get('mac', '').strip()
+        if not target_mac:
+            self.notify('Imprimante non configurée (MAC manquant)', 'error')
+            return
+        socket = None
+        try:
+            adapter = BluetoothAdapter.getDefaultAdapter()
+            if not adapter or not adapter.isEnabled():
+                self.notify('Bluetooth est désactivé', 'error')
+                return
+            try:
+                device = adapter.getRemoteDevice(target_mac)
+                uuid = UUID.fromString('00001101-0000-1000-8000-00805F9B34FB')
+                socket = device.createRfcommSocketToServiceRecord(uuid)
+                socket.connect()
+            except Exception as conn_error:
+                err_str = str(conn_error).lower()
+                if 'refused' in err_str or 'unable' in err_str:
+                    self.notify("Échec de connexion : Vérifiez l'imprimante", 'error')
+                elif 'permission' in err_str:
+                    self.notify('Erreur Permission : Appairage bloqué', 'error')
+                else:
+                    self.notify(f'Erreur Connexion : {conn_error}', 'error')
+                return
+            output_stream = socket.getOutputStream()
+            ESC = b'\x1b'
+            GS = b'\x1d'
+            INIT = ESC + b'@'
+            CUT = GS + b'VB\x00'
+            CENTER = ESC + b'a\x01'
+            LEFT = ESC + b'a\x00'
+            RIGHT = ESC + b'a\x02'
+            BOLD_ON = ESC + b'E\x01'
+            BOLD_OFF = ESC + b'E\x00'
+            BIG_FONT = GS + b'!\x11'
+            NORM_FONT = GS + b'!\x00'
+
+            def enc(txt):
+                try:
+                    return str(txt).encode('cp1256', errors='replace')
+                except:
+                    return str(txt).encode('utf-8', errors='ignore')
+
+            def proc_ar(text):
+                if not text:
+                    return ''
+                try:
+                    reshaped = reshaper.reshape(str(text))
+                    bidi_text = get_display(reshaped)
+                    return bidi_text
+                except:
+                    return str(text)
+            buffer = b''
+            buffer += INIT
+            store_name = 'MagPro Stock'
+            buffer += CENTER + BOLD_ON + enc(proc_ar(store_name)) + b'\n' + BOLD_OFF
+            date_str = transaction_data.get('timestamp', '')[:16]
+            user_str = transaction_data.get('user_name', '')
+            raw_client = 'Passager'
+            if self.selected_entity:
+                raw_client = self.selected_entity.get('name', 'Passager')
+            client_display = proc_ar(raw_client)
+            if transaction_data.get('is_simple_payment', False):
+                amount = float(transaction_data.get('amount', 0))
+                pay_type = transaction_data.get('type', '')
+                title = 'BON DE VERSEMENT'
+                if amount < 0:
+                    title = 'BON DE CREDIT' if pay_type == 'client_pay' else 'DETTE FOURNISSEUR'
+                elif pay_type == 'supplier_pay':
+                    title = 'REGLEMENT FOURNISSEUR'
+                buffer += BOLD_ON + enc(title) + b'\n' + BOLD_OFF
+                buffer += enc('-' * 48) + b'\n'
+                buffer += LEFT
+                buffer += enc(f'Date : {date_str}\n')
+                buffer += enc(f'Utilisateur : {user_str}\n')
+                buffer += enc(f'Client : {client_display}\n')
+                buffer += enc('-' * 48) + b'\n'
+                buffer += CENTER
+                buffer += BIG_FONT + BOLD_ON
+                buffer += enc(f'MONTANT : {int(abs(amount))} DA\n')
+                buffer += NORM_FONT + BOLD_OFF
+                buffer += LEFT
+                if transaction_data.get('custom_label'):
+                    buffer += enc(f"Ref : {transaction_data.get('custom_label')}\n")
+                buffer += enc('-' * 48) + b'\n'
+                buffer += CENTER + enc('\nSignature\n\n\n')
+            else:
+                doc_type = transaction_data.get('doc_type', 'BV')
+                titles_fr = {'BV': 'TICKET DE VENTE', 'FC': 'FACTURE', 'RC': 'RETOUR CLIENT', 'FP': 'PROFORMA', 'BA': 'BON ACHAT'}
+                doc_title = titles_fr.get(doc_type, doc_type)
+                buffer += enc(doc_title) + b'\n'
+                buffer += enc('-' * 48) + b'\n'
+                buffer += LEFT
+                buffer += enc(f'Date : {date_str}\n')
+                buffer += enc(f'User : {user_str}\n')
+                buffer += enc(f'Client : {client_display}\n')
+                buffer += enc('-' * 48) + b'\n'
+                header_line = f"{'Article':<28} {'Qte':<6} {'Prix':<12}\n"
+                buffer += enc(header_line)
+                buffer += enc('-' * 48) + b'\n'
+                total = 0
+                items = transaction_data.get('items', [])
+                for item in items:
+                    raw_prod = item.get('name', '')
+                    prod_display = proc_ar(raw_prod)
+                    name = prod_display[:28]
+                    qty = item.get('qty', 0)
+                    price = item.get('price', 0)
+                    row_total = qty * price
+                    total += row_total
+                    qty_str = str(int(qty)) if float(qty).is_integer() else str(qty)
+                    price_str = str(int(price))
+                    line = f'{name:<28} {qty_str:<6} {price_str:<12}\n'
+                    buffer += enc(line)
+                buffer += enc('-' * 48) + b'\n'
+                buffer += RIGHT + BIG_FONT + BOLD_ON
+                buffer += enc(f'TOTAL : {int(total)} DA\n')
+                buffer += NORM_FONT + BOLD_OFF + LEFT
+                payment = transaction_data.get('payment_info', {})
+                paid = float(payment.get('amount', 0))
+                if paid > 0:
+                    buffer += enc(f'Verse : {int(paid)} DA\n')
+                    reste = total - paid
+                    label_reste = 'Reste' if reste > 0 else 'Rendu'
+                    buffer += enc(f'{label_reste} : {int(abs(reste))} DA\n')
+                buffer += CENTER + enc('\nMerci de votre visite\n\n')
+            buffer += CUT
+            output_stream.write(buffer)
+            output_stream.flush()
+            socket.close()
+            self.notify('Impression terminee', 'success')
+        except Exception as e:
+            err_msg = str(e).lower()
+            if 'security' in err_msg:
+                self.notify('Erreur Sécurité : Permission Bluetooth manquante', 'error')
+            else:
+                print(f'Print Error: {e}')
+                self.notify("Erreur d'impression", 'error')
+            try:
+                if socket:
+                    socket.close()
+            except:
+                pass
+
+    def request_android_permissions(self):
+        if platform != 'android':
+            return
+        try:
+            from android.permissions import request_permissions, Permission
+            from jnius import autoclass
+
+            def callback(permissions, results):
+                if not all(results):
+                    self.notify('Permission refusée : Bluetooth requis', 'error')
+                else:
+                    print('Permissions Bluetooth accordées')
+            Build = autoclass('android.os.Build')
+            VERSION = autoclass('android.os.Build$VERSION')
+            permissions_list = [Permission.BLUETOOTH, Permission.BLUETOOTH_ADMIN, Permission.ACCESS_COARSE_LOCATION, Permission.ACCESS_FINE_LOCATION]
+            if VERSION.SDK_INT >= 31:
+                permissions_list.extend(['android.permission.BLUETOOTH_CONNECT', 'android.permission.BLUETOOTH_SCAN'])
+            request_permissions(permissions_list, callback)
+        except Exception as e:
+            print(f'Erreur permissions: {e}')
+
     def build(self):
         Builder.load_string(KV_BUILDER)
         self.title = 'MagPro Gestion de Stock'
@@ -305,6 +539,8 @@ class StockApp(MDApp):
         return self.root_box
 
     def on_start(self):
+        if platform == 'android':
+            self.request_android_permissions()
         Clock.schedule_once(self._deferred_start, 0.5)
 
     def _deferred_start(self, dt):
@@ -585,6 +821,13 @@ class StockApp(MDApp):
 
         def release_lock_and_finish(req=None, res=None):
             self.is_transaction_in_progress = False
+            try:
+                if self.store.exists('printer_config'):
+                    conf = self.store.get('printer_config')
+                    if conf.get('auto', False) and conf.get('mac', ''):
+                        threading.Thread(target=self.print_ticket_bluetooth, args=(data,), daemon=True).start()
+            except Exception as e:
+                print(f'Auto print payment error: {e}')
         if self.is_server_reachable:
 
             def on_success(req, res):
@@ -878,30 +1121,46 @@ class StockApp(MDApp):
     def check_server_heartbeat(self, dt):
         if self.sync_paused:
             self.is_server_reachable = False
-            self.status_bar_label.text = 'Synchronisation Arrêtée (PAUSE)'
-            self.status_bar_bg.md_bg_color = (0.8, 0, 0, 1)
+            if self.status_bar_label:
+                self.status_bar_label.text = 'Synchronisation Arrêtée (PAUSE)'
+                self.status_bar_bg.md_bg_color = (0.8, 0, 0, 1)
             return
-        start_time = time.time()
-        url_local = f'http://{self.local_server_ip}:{DEFAULT_PORT}/api/categories'
-        UrlRequest(url_local, on_success=lambda req, res: self._on_local_success(req, res, start_time), on_error=self._on_local_fail, on_failure=self._on_local_fail, timeout=2)
+        threading.Thread(target=self._run_socket_ping_logic, daemon=True).start()
 
-    def _on_local_success(self, req, res, start_time):
-        self.last_ping = int((time.time() - start_time) * 1000)
-        self.active_server_ip = self.local_server_ip
-        self._on_heartbeat_success()
-
-    def _on_local_fail(self, req, err):
+    def _run_socket_ping_logic(self):
+        ping_val = self._try_ping_host(self.local_server_ip)
+        if ping_val is not None:
+            self._finalize_ping_ui(True, ping_val, self.local_server_ip)
+            return
         if self.external_server_ip:
-            start_time = time.time()
-            url_ext = f'http://{self.external_server_ip}:{DEFAULT_PORT}/api/categories'
-            UrlRequest(url_ext, on_success=lambda req, res: self._on_ext_success(req, res, start_time), on_error=self._on_heartbeat_fail_final, on_failure=self._on_heartbeat_fail_final, timeout=3)
-        else:
-            self._on_heartbeat_fail_final(req, err)
+            ping_val_ext = self._try_ping_host(self.external_server_ip)
+            if ping_val_ext is not None:
+                self._finalize_ping_ui(True, ping_val_ext, self.external_server_ip)
+                return
+        self._finalize_ping_ui(False, 0, None)
 
-    def _on_ext_success(self, req, res, start_time):
-        self.last_ping = int((time.time() - start_time) * 1000)
-        self.active_server_ip = self.external_server_ip
-        self._on_heartbeat_success()
+    def _try_ping_host(self, ip_address):
+        if not ip_address:
+            return None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2.0)
+            start_time = time.time()
+            sock.connect((ip_address, int(DEFAULT_PORT)))
+            sock.close()
+            end_time = time.time()
+            return int((end_time - start_time) * 1000)
+        except:
+            return None
+
+    @mainthread
+    def _finalize_ping_ui(self, success, ping_val, confirmed_ip):
+        if success:
+            self.last_ping = ping_val
+            self.active_server_ip = confirmed_ip
+            self._on_heartbeat_success()
+        else:
+            self._on_heartbeat_fail_final(None, 'Connection Failed')
 
     def _reset_notification_state(self, dt):
         if not self.status_bar_label:
@@ -918,15 +1177,15 @@ class StockApp(MDApp):
         pending = len([k for k in self.offline_store.keys() if not self.offline_store.get(k).get('synced', False)])
         ping_display = ''
         bg_color = (0.4, 0.4, 0.4, 1)
+        ping_val = getattr(self, 'last_ping', 0)
         if self.is_server_reachable:
-            ping_val = getattr(self, 'last_ping', 0)
             if ping_val < 100:
                 bg_color = (0, 0.7, 0, 1)
             elif ping_val < 300:
                 bg_color = (0.9, 0.5, 0, 1)
             else:
                 bg_color = (0.8, 0, 0, 1)
-            ping_display = f' • [color=FFFFFF][b][size=18sp]{ping_val}ms[/size][/b][/color]'
+            ping_display = f' • [color=FFFFFF][b][size=16sp]{ping_val}ms[/size][/b][/color]'
         if pending > 0:
             if self.is_server_reachable and ping_val >= 300:
                 self.status_bar_bg.md_bg_color = (0.8, 0, 0, 1)
@@ -938,7 +1197,7 @@ class StockApp(MDApp):
             self.status_bar_bg.md_bg_color = bg_color
             self.status_bar_label.text = f'Connecté ({net}){ping_display}'
         else:
-            self.status_bar_label.text = 'Hors Ligne (Cache)'
+            self.status_bar_label.text = 'Hors Ligne'
             self.status_bar_bg.md_bg_color = (0.4, 0.4, 0.4, 1)
 
     def _on_heartbeat_success(self):
@@ -1324,12 +1583,31 @@ class StockApp(MDApp):
         self.edit_dialog.open()
 
     def open_ip_settings(self, instance):
-        content = MDBoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height='280dp', padding='10dp')
+        content = MDBoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height='450dp', padding='10dp')
         content.add_widget(MDLabel(text='Configuration Serveur', font_style='Subtitle2', theme_text_color='Primary'))
         self.local_ip_field = MDTextField(text=self.local_server_ip, hint_text='IP Local', icon_right='lan')
         content.add_widget(self.local_ip_field)
         self.external_ip_field = MDTextField(text=self.external_server_ip, hint_text='IP Externe', icon_right='web')
         content.add_widget(self.external_ip_field)
+        content.add_widget(MDLabel(text='Imprimante Bluetooth (80mm)', font_style='Subtitle2', theme_text_color='Primary'))
+        printer_conf = {'name': '', 'mac': '', 'auto': False}
+        if self.store.exists('printer_config'):
+            printer_conf = self.store.get('printer_config')
+        self.temp_selected_mac = printer_conf.get('mac', '')
+        printer_box = MDBoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height=dp(60))
+        self.printer_name_field = MDTextField(text=printer_conf.get('name', ''), hint_text='Imprimante non définie', readonly=True, size_hint_x=0.8)
+        if self.temp_selected_mac:
+            self.printer_name_field.helper_text = f'ID: {self.temp_selected_mac}'
+        btn_search_bt = MDIconButton(icon='magnify', md_bg_color=(0.2, 0.2, 0.2, 1), theme_text_color='Custom', text_color=(1, 1, 1, 1), on_release=self.open_bluetooth_selector)
+        printer_box.add_widget(self.printer_name_field)
+        printer_box.add_widget(btn_search_bt)
+        content.add_widget(printer_box)
+        row_opts = MDBoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height=dp(50))
+        lbl_auto = MDLabel(text='Impression Auto après vente:', size_hint_x=0.7, valign='center')
+        self.chk_auto_print = MDCheckbox(active=printer_conf.get('auto', False), size_hint=(None, None), size=(dp(40), dp(40)))
+        row_opts.add_widget(lbl_auto)
+        row_opts.add_widget(self.chk_auto_print)
+        content.add_widget(row_opts)
         content.add_widget(MDLabel(text='Administration', font_style='Subtitle2', theme_text_color='Primary'))
         btn_seller = MDRaisedButton(text='GÉRER LE MODE VENDEUR', md_bg_color=(0.3, 0.3, 0.3, 1), size_hint_x=1, elevation=1, on_release=self.open_seller_auth_dialog)
         content.add_widget(btn_seller)
@@ -1339,11 +1617,15 @@ class StockApp(MDApp):
     def save_ip(self, x):
         local_ip = self.local_ip_field.text
         ext_ip = self.external_ip_field.text
+        p_name = self.printer_name_field.text
+        p_mac = getattr(self, 'temp_selected_mac', '')
+        p_auto = self.chk_auto_print.active
         if DataValidator.validate_ip(local_ip):
             self.local_server_ip = local_ip
             self.external_server_ip = ext_ip
             self.active_server_ip = local_ip
             self.store.put('config', ip=self.local_server_ip, ext_ip=self.external_server_ip, seller_mode=self.is_seller_mode)
+            self.store.put('printer_config', name=p_name, mac=p_mac, auto=p_auto)
             if self.dialog:
                 self.dialog.dismiss()
             self.notify('Configuration enregistrée', 'success')
@@ -1906,7 +2188,7 @@ class StockApp(MDApp):
                 display_name = self.fix_text(raw_name)
                 balance = float(e.get('balance', 0))
                 bal_text = f'{int(balance)} DA'
-                secondary_markup = f'Solde: [color={bal_color_hex}][b][size=46]{bal_text}[/size][/b][/color]'
+                secondary_markup = f'Solde: [color={bal_color_hex}][b]{bal_text}[/size][/b][/color]'
                 if balance <= 0:
                     icon_name = 'account-check'
                     icon_col = (0, 0.7, 0, 1)
@@ -2084,6 +2366,14 @@ class StockApp(MDApp):
 
             def finalize_process(req=None, res=None):
                 self.is_transaction_in_progress = False
+                try:
+                    if self.current_mode in ['sale', 'invoice_sale', 'return_sale']:
+                        if self.store.exists('printer_config'):
+                            conf = self.store.get('printer_config')
+                            if conf.get('auto', False) and conf.get('mac', ''):
+                                threading.Thread(target=self.print_ticket_bluetooth, args=(data,), daemon=True).start()
+                except Exception as e:
+                    print(f'Auto print error: {e}')
                 self.on_submit_success_ui()
 
             def on_fail(req, err):
