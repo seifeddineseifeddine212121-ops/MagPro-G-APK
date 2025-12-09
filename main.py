@@ -60,21 +60,16 @@ try:
         LabelBase.register(name='RobotoMedium', fn_regular=FONT_FILE, fn_bold=FONT_FILE)
         LabelBase.register(name='RobotoBold', fn_regular=FONT_FILE, fn_bold=FONT_FILE)
         custom_font_loaded = True
-        print('[INFO] Custom font loaded successfully.')
     else:
         print('[WARNING] Custom font file NOT found.')
 except Exception as e:
     print(f'[ERROR] Critical error loading custom font: {e}')
-    custom_font_loaded = False
 if not custom_font_loaded:
-    print('[INFO] Switching to fallback fonts (KivyMD Defaults).')
     fallback_regular = os.path.join(fonts_path, 'Roboto-Regular.ttf')
     fallback_bold = os.path.join(fonts_path, 'Roboto-Bold.ttf')
     try:
         LabelBase.register(name='ArabicFont', fn_regular=fallback_regular, fn_bold=fallback_bold)
-        print("[INFO] 'ArabicFont' aliased to Roboto (Fallback).")
-    except Exception as e:
-        print(f'[ERROR] Could not link fallback font: {e}')
+    except Exception:
         LabelBase.register(name='ArabicFont', fn_regular=None, fn_bold=None)
 
 reshaper = arabic_reshaper.ArabicReshaper(configuration={'delete_harakat': True, 'support_ligatures': True, 'use_unshaped_instead_of_isolated': True})
@@ -258,7 +253,7 @@ class StockApp(MDApp):
     lbl_cart_total = None
     lbl_total_title = None
     current_entity_type_mgmt = 'account'
-    DOC_TRANSLATIONS = {'BV': 'Bon de Vente', 'BA': "Bon d'Achat", 'FC': 'Facture Vente', 'FF': 'Facture Achat', 'RC': 'Retour Client', 'RF': 'Retour Fournisseur', 'TR': 'Transfert de Stock', 'FP': 'Facture Proforma', 'DP': 'Bon de Commande', 'BI': 'Bon Initial', 'BT': 'Bon de Table'}
+    DOC_TRANSLATIONS = {'BV': 'Bon de Vente', 'BA': "Bon d'Achat", 'FC': 'Facture Vente', 'FF': 'Facture Achat', 'RC': 'Retour Client', 'RF': 'Retour Fournisseur', 'TR': 'Transfert de Stock', 'FP': 'Facture Proforma', 'DP': 'Bon de Commande', 'BI': 'Bon Initial'}
 
     def fix_text(self, text):
         if not text:
@@ -273,15 +268,12 @@ class StockApp(MDApp):
 
     def open_bluetooth_selector(self, instance):
         if platform != 'android':
-            self.notify('Disponible uniquement sur Android', 'error')
+            self.notify('Fonction disponible uniquement sur Android', 'error')
             return
         try:
             adapter = BluetoothAdapter.getDefaultAdapter()
-            if not adapter:
-                self.notify('Bluetooth non disponible sur cet appareil', 'error')
-                return
-            if not adapter.isEnabled():
-                self.notify('Veuillez activer le Bluetooth !', 'error')
+            if not adapter or not adapter.isEnabled():
+                self.notify('Bluetooth désactivé !', 'error')
                 return
             paired_devices = adapter.getBondedDevices().toArray()
             content = MDBoxLayout(orientation='vertical', size_hint_y=None, height=dp(400))
@@ -289,7 +281,6 @@ class StockApp(MDApp):
             list_layout = MDList()
             if not paired_devices:
                 list_layout.add_widget(OneLineListItem(text='Aucun appareil associé (Paired)'))
-                list_layout.add_widget(OneLineListItem(text="Veuillez appairer l'imprimante dans les paramètres Android"))
             else:
                 for device in paired_devices:
                     d_name = device.getName()
@@ -302,18 +293,7 @@ class StockApp(MDApp):
             self.bt_dialog = MDDialog(title='Choisir Imprimante', type='custom', content_cls=content, buttons=[MDFlatButton(text='ANNULER', on_release=lambda x: self.bt_dialog.dismiss())])
             self.bt_dialog.open()
         except Exception as e:
-            error_msg = str(e).lower()
-            if 'permission' in error_msg or 'security' in error_msg:
-                self.notify('Erreur : Accès Bluetooth refusé par Android', 'error')
-                self.request_android_permissions()
-            else:
-                self.notify(f'Erreur Bluetooth : {e}', 'error')
-        except Exception as e:
-            err_msg = str(e).lower()
-            if 'security' in err_msg or 'permission' in err_msg:
-                self.notify('خطأ صلاحيات: اسمح للتطبيق بالوصول للبلوتوث من إعدادات الهاتف', 'error')
-            else:
-                self.notify(f'خطأ: {e}', 'error')
+            self.notify(f'Erreur Bluetooth: {e}', 'error')
 
     def select_printer(self, name, mac):
         if hasattr(self, 'printer_name_field'):
@@ -324,6 +304,13 @@ class StockApp(MDApp):
             self.bt_dialog.dismiss()
         self.notify(f'Sélectionné: {name}', 'success')
 
+    def clear_printer_selection(self, instance):
+        if hasattr(self, 'printer_name_field'):
+            self.printer_name_field.text = ''
+            self.printer_name_field.helper_text = 'Imprimante non définie'
+        self.temp_selected_mac = ''
+        self.notify('Imprimante effacée', 'info')
+
     def print_ticket_bluetooth(self, transaction_data):
         if platform != 'android':
             return
@@ -332,27 +319,20 @@ class StockApp(MDApp):
         config = self.store.get('printer_config')
         target_mac = config.get('mac', '').strip()
         if not target_mac:
-            self.notify('Imprimante non configurée (MAC manquant)', 'error')
             return
         socket = None
         try:
             adapter = BluetoothAdapter.getDefaultAdapter()
             if not adapter or not adapter.isEnabled():
-                self.notify('Bluetooth est désactivé', 'error')
+                self.notify('Bluetooth OFF', 'error')
                 return
             try:
                 device = adapter.getRemoteDevice(target_mac)
                 uuid = UUID.fromString('00001101-0000-1000-8000-00805F9B34FB')
                 socket = device.createRfcommSocketToServiceRecord(uuid)
                 socket.connect()
-            except Exception as conn_error:
-                err_str = str(conn_error).lower()
-                if 'refused' in err_str or 'unable' in err_str:
-                    self.notify("Échec de connexion : Vérifiez l'imprimante", 'error')
-                elif 'permission' in err_str:
-                    self.notify('Erreur Permission : Appairage bloqué', 'error')
-                else:
-                    self.notify(f'Erreur Connexion : {conn_error}', 'error')
+            except Exception as e:
+                self.notify('Echec connexion imprimante', 'error')
                 return
             output_stream = socket.getOutputStream()
             ESC = b'\x1b'
@@ -385,13 +365,36 @@ class StockApp(MDApp):
             buffer = b''
             buffer += INIT
             store_name = 'MagPro Stock'
-            buffer += CENTER + BOLD_ON + enc(proc_ar(store_name)) + b'\n' + BOLD_OFF
+            store_address = ''
+            store_phone = ''
+            if self.store.exists('print_header'):
+                header_conf = self.store.get('print_header')
+                store_name = header_conf.get('name', store_name)
+                store_address = header_conf.get('address', '')
+                store_phone = header_conf.get('phone', '')
+            buffer += CENTER + BOLD_ON + BIG_FONT + enc(proc_ar(store_name)) + b'\n' + NORM_FONT
+            if store_address:
+                buffer += enc(proc_ar(store_address)) + b'\n'
+            if store_phone:
+                buffer += enc(f'Tel: {store_phone}') + b'\n'
+            buffer += BOLD_OFF + enc('-' * 48) + b'\n' + LEFT
             date_str = transaction_data.get('timestamp', '')[:16]
-            user_str = transaction_data.get('user_name', '')
-            raw_client = 'Passager'
+            user_str = transaction_data.get('user_name', self.current_user_name)
+            entity_name_raw = 'Passager'
             if self.selected_entity:
-                raw_client = self.selected_entity.get('name', 'Passager')
-            client_display = proc_ar(raw_client)
+                entity_name_raw = self.selected_entity.get('name', 'Passager')
+            elif transaction_data.get('entity_id'):
+                e_id = transaction_data.get('entity_id')
+                found = next((c for c in self.all_clients if c['id'] == e_id), None)
+                if not found:
+                    found = next((s for s in self.all_suppliers if s['id'] == e_id), None)
+                if found:
+                    entity_name_raw = found.get('name', 'Client')
+                elif e_id == 1:
+                    entity_name_raw = 'Comptoir'
+                elif e_id == 2:
+                    entity_name_raw = 'Fournisseur'
+            client_display = proc_ar(entity_name_raw)
             if transaction_data.get('is_simple_payment', False):
                 amount = float(transaction_data.get('amount', 0))
                 pay_type = transaction_data.get('type', '')
@@ -400,30 +403,30 @@ class StockApp(MDApp):
                     title = 'BON DE CREDIT' if pay_type == 'client_pay' else 'DETTE FOURNISSEUR'
                 elif pay_type == 'supplier_pay':
                     title = 'REGLEMENT FOURNISSEUR'
-                buffer += BOLD_ON + enc(title) + b'\n' + BOLD_OFF
+                buffer += CENTER + BOLD_ON + enc(title) + b'\n' + BOLD_OFF + LEFT
                 buffer += enc('-' * 48) + b'\n'
                 buffer += LEFT
                 buffer += enc(f'Date : {date_str}\n')
-                buffer += enc(f'Utilisateur : {user_str}\n')
+                buffer += enc(f'User : {user_str}\n')
                 buffer += enc(f'Client : {client_display}\n')
                 buffer += enc('-' * 48) + b'\n'
                 buffer += CENTER
                 buffer += BIG_FONT + BOLD_ON
-                buffer += enc(f'MONTANT : {int(abs(amount))} DA\n')
+                buffer += enc(f'MONTANT: {int(abs(amount))} DA\n')
                 buffer += NORM_FONT + BOLD_OFF
                 buffer += LEFT
                 if transaction_data.get('custom_label'):
-                    buffer += enc(f"Ref : {transaction_data.get('custom_label')}\n")
+                    buffer += enc(f"Note: {proc_ar(transaction_data.get('custom_label'))}\n")
                 buffer += enc('-' * 48) + b'\n'
                 buffer += CENTER + enc('\nSignature\n\n\n')
             else:
                 doc_type = transaction_data.get('doc_type', 'BV')
-                titles_fr = {'BV': 'TICKET DE VENTE', 'FC': 'FACTURE', 'RC': 'RETOUR CLIENT', 'FP': 'PROFORMA', 'BA': 'BON ACHAT'}
-                doc_title = titles_fr.get(doc_type, doc_type)
-                buffer += enc(doc_title) + b'\n'
+                doc_titles = {'BV': 'BON DE VENTE', 'FC': 'FACTURE', 'FP': 'FACTURE PROFORMA', 'RC': 'RETOUR CLIENT', 'BA': 'BON DE RECEPTION', 'FF': 'FACTURE ACHAT', 'RF': 'RETOUR FOURNISSEUR', 'DP': 'COMMANDE', 'TR': 'TRANSFERT STOCK', 'BI': 'BON INITIAL'}
+                doc_title = doc_titles.get(doc_type, doc_type)
+                buffer += CENTER + BOLD_ON + enc(doc_title) + b'\n' + BOLD_OFF + LEFT
                 buffer += enc('-' * 48) + b'\n'
-                buffer += LEFT
                 buffer += enc(f'Date : {date_str}\n')
+                buffer += enc(f"Bon N : {transaction_data.get('description', '')}\n")
                 buffer += enc(f'User : {user_str}\n')
                 buffer += enc(f'Client : {client_display}\n')
                 buffer += enc('-' * 48) + b'\n'
@@ -445,55 +448,29 @@ class StockApp(MDApp):
                     line = f'{name:<28} {qty_str:<6} {price_str:<12}\n'
                     buffer += enc(line)
                 buffer += enc('-' * 48) + b'\n'
-                buffer += RIGHT + BIG_FONT + BOLD_ON
-                buffer += enc(f'TOTAL : {int(total)} DA\n')
-                buffer += NORM_FONT + BOLD_OFF + LEFT
-                payment = transaction_data.get('payment_info', {})
-                paid = float(payment.get('amount', 0))
-                if paid > 0:
-                    buffer += enc(f'Verse : {int(paid)} DA\n')
-                    reste = total - paid
-                    label_reste = 'Reste' if reste > 0 else 'Rendu'
-                    buffer += enc(f'{label_reste} : {int(abs(reste))} DA\n')
+                if doc_type != 'TR':
+                    buffer += RIGHT + BIG_FONT + BOLD_ON
+                    buffer += enc(f'TOTAL: {int(total)} DA\n')
+                    buffer += NORM_FONT + BOLD_OFF + LEFT
+                    payment = transaction_data.get('payment_info', {})
+                    paid = float(payment.get('amount', 0))
+                    if paid > 0:
+                        buffer += enc(f'Verse: {int(paid)} DA\n')
+                        reste = total - paid
+                        label_reste = 'Reste' if reste > 0 else 'Rendu'
+                        buffer += enc(f'{label_reste}: {int(abs(reste))} DA\n')
                 buffer += CENTER + enc('\nMerci de votre visite\n\n')
             buffer += CUT
             output_stream.write(buffer)
             output_stream.flush()
             socket.close()
-            self.notify('Impression terminee', 'success')
+            self.notify('Impression OK', 'success')
         except Exception as e:
-            err_msg = str(e).lower()
-            if 'security' in err_msg:
-                self.notify('Erreur Sécurité : Permission Bluetooth manquante', 'error')
-            else:
-                print(f'Print Error: {e}')
-                self.notify("Erreur d'impression", 'error')
             try:
                 if socket:
                     socket.close()
             except:
                 pass
-
-    def request_android_permissions(self):
-        if platform != 'android':
-            return
-        try:
-            from android.permissions import request_permissions, Permission
-            from jnius import autoclass
-
-            def callback(permissions, results):
-                if not all(results):
-                    self.notify('Permission refusée : Bluetooth requis', 'error')
-                else:
-                    print('Permissions Bluetooth accordées')
-            Build = autoclass('android.os.Build')
-            VERSION = autoclass('android.os.Build$VERSION')
-            permissions_list = [Permission.BLUETOOTH, Permission.BLUETOOTH_ADMIN, Permission.ACCESS_COARSE_LOCATION, Permission.ACCESS_FINE_LOCATION]
-            if VERSION.SDK_INT >= 31:
-                permissions_list.extend(['android.permission.BLUETOOTH_CONNECT', 'android.permission.BLUETOOTH_SCAN'])
-            request_permissions(permissions_list, callback)
-        except Exception as e:
-            print(f'Erreur permissions: {e}')
 
     def build(self):
         Builder.load_string(KV_BUILDER)
@@ -542,6 +519,24 @@ class StockApp(MDApp):
         if platform == 'android':
             self.request_android_permissions()
         Clock.schedule_once(self._deferred_start, 0.5)
+
+    def request_android_permissions(self):
+        if platform != 'android':
+            return
+        try:
+            from android.permissions import request_permissions, Permission
+            from jnius import autoclass
+
+            def callback(permissions, results):
+                pass
+            Build = autoclass('android.os.Build')
+            VERSION = autoclass('android.os.Build$VERSION')
+            permissions_list = [Permission.BLUETOOTH, Permission.BLUETOOTH_ADMIN, Permission.ACCESS_COARSE_LOCATION, Permission.ACCESS_FINE_LOCATION]
+            if VERSION.SDK_INT >= 31:
+                permissions_list.extend(['android.permission.BLUETOOTH_CONNECT', 'android.permission.BLUETOOTH_SCAN'])
+            request_permissions(permissions_list, callback)
+        except Exception:
+            pass
 
     def _deferred_start(self, dt):
         self.cleanup_old_synced_data()
@@ -1200,6 +1195,13 @@ class StockApp(MDApp):
             self.status_bar_label.text = 'Hors Ligne'
             self.status_bar_bg.md_bg_color = (0.4, 0.4, 0.4, 1)
 
+    def fetch_store_info(self):
+        UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/store_info', on_success=self.save_store_info_callback)
+
+    def save_store_info_callback(self, req, res):
+        if res:
+            self.store.put('print_header', name=res.get('name', ''), address=res.get('address', ''), phone=res.get('phone', ''))
+
     def _on_heartbeat_success(self):
         self.is_server_reachable = True
         unsynced = [k for k in self.offline_store.keys() if not self.offline_store.get(k).get('synced', False)]
@@ -1211,10 +1213,13 @@ class StockApp(MDApp):
             self.fetch_products()
             self.fetch_entities('account')
             self.fetch_entities('supplier')
+            self.fetch_store_info()
         if hasattr(self, 'login_status_icon'):
             self.login_status_icon.text_color = (0, 0.8, 0, 1)
         if not self._notify_event:
             self._reset_notification_state(0)
+        if not self.store.exists('print_header'):
+            self.fetch_store_info()
 
     def _on_heartbeat_fail_final(self, req, err):
         if self.is_server_reachable:
@@ -1316,6 +1321,7 @@ class StockApp(MDApp):
             self.fetch_products()
             self.fetch_entities('account')
             self.fetch_entities('supplier')
+            self.fetch_store_info()
             self.check_and_load_stats()
         else:
             self.notify('Identifiants incorrects', 'error')
@@ -1583,35 +1589,50 @@ class StockApp(MDApp):
         self.edit_dialog.open()
 
     def open_ip_settings(self, instance):
-        content = MDBoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height='450dp', padding='10dp')
-        content.add_widget(MDLabel(text='Configuration Serveur', font_style='Subtitle2', theme_text_color='Primary'))
-        self.local_ip_field = MDTextField(text=self.local_server_ip, hint_text='IP Local', icon_right='lan')
-        content.add_widget(self.local_ip_field)
+        content = MDBoxLayout(orientation='vertical', spacing='12dp', size_hint_y=None, height='450dp', padding='15dp')
+        scroll = MDScrollView()
+        box = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing='20dp')
+        box.add_widget(MDBoxLayout(size_hint_y=None, height='20dp'))
+        server_card = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing='10dp')
+        server_card.add_widget(MDLabel(text='Configuration Serveur', font_style='Subtitle2', theme_text_color='Primary', bold=True))
+        self.local_ip_field = MDTextField(text=self.local_server_ip, hint_text='IP Local', icon_right='lan-connect')
         self.external_ip_field = MDTextField(text=self.external_server_ip, hint_text='IP Externe', icon_right='web')
-        content.add_widget(self.external_ip_field)
-        content.add_widget(MDLabel(text='Imprimante Bluetooth (80mm)', font_style='Subtitle2', theme_text_color='Primary'))
+        server_card.add_widget(self.local_ip_field)
+        server_card.add_widget(self.external_ip_field)
+        box.add_widget(server_card)
+        box.add_widget(MDBoxLayout(size_hint_y=None, height='1dp', md_bg_color=(0.9, 0.9, 0.9, 1)))
+        printer_card = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing='10dp')
+        printer_card.add_widget(MDLabel(text='Imprimante Bluetooth (80mm)', font_style='Subtitle2', theme_text_color='Primary', bold=True))
         printer_conf = {'name': '', 'mac': '', 'auto': False}
         if self.store.exists('printer_config'):
             printer_conf = self.store.get('printer_config')
         self.temp_selected_mac = printer_conf.get('mac', '')
-        printer_box = MDBoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height=dp(60))
-        self.printer_name_field = MDTextField(text=printer_conf.get('name', ''), hint_text='Imprimante non définie', readonly=True, size_hint_x=0.8)
+        printer_box = MDBoxLayout(orientation='horizontal', spacing='8dp', size_hint_y=None, height='50dp')
+        self.printer_name_field = MDTextField(text=printer_conf.get('name', ''), hint_text='Imprimante non définie', readonly=True, size_hint_x=0.7, pos_hint={'center_y': 0.5})
         if self.temp_selected_mac:
             self.printer_name_field.helper_text = f'ID: {self.temp_selected_mac}'
-        btn_search_bt = MDIconButton(icon='magnify', md_bg_color=(0.2, 0.2, 0.2, 1), theme_text_color='Custom', text_color=(1, 1, 1, 1), on_release=self.open_bluetooth_selector)
+        btn_search_bt = MDIconButton(icon='magnify', icon_size='20sp', md_bg_color=(0.2, 0.2, 0.2, 1), theme_text_color='Custom', text_color=(1, 1, 1, 1), pos_hint={'center_y': 0.6}, size_hint=(None, None), size=(dp(40), dp(40)), on_release=self.open_bluetooth_selector)
+        btn_clear_bt = MDIconButton(icon='delete', icon_size='20sp', md_bg_color=(0.8, 0.2, 0.2, 1), theme_text_color='Custom', text_color=(1, 1, 1, 1), pos_hint={'center_y': 0.6}, size_hint=(None, None), size=(dp(40), dp(40)), on_release=self.clear_printer_selection)
         printer_box.add_widget(self.printer_name_field)
         printer_box.add_widget(btn_search_bt)
-        content.add_widget(printer_box)
-        row_opts = MDBoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height=dp(50))
-        lbl_auto = MDLabel(text='Impression Auto après vente:', size_hint_x=0.7, valign='center')
-        self.chk_auto_print = MDCheckbox(active=printer_conf.get('auto', False), size_hint=(None, None), size=(dp(40), dp(40)))
+        printer_box.add_widget(btn_clear_bt)
+        printer_card.add_widget(printer_box)
+        row_opts = MDBoxLayout(orientation='horizontal', spacing='10dp', size_hint_y=None, height='40dp')
+        lbl_auto = MDLabel(text='Impression Auto après validation:', size_hint_x=0.85, valign='center', theme_text_color='Secondary')
+        self.chk_auto_print = MDCheckbox(active=printer_conf.get('auto', False), size_hint=(None, None), size=(dp(40), dp(40)), pos_hint={'center_y': 0.5})
         row_opts.add_widget(lbl_auto)
         row_opts.add_widget(self.chk_auto_print)
-        content.add_widget(row_opts)
-        content.add_widget(MDLabel(text='Administration', font_style='Subtitle2', theme_text_color='Primary'))
-        btn_seller = MDRaisedButton(text='GÉRER LE MODE VENDEUR', md_bg_color=(0.3, 0.3, 0.3, 1), size_hint_x=1, elevation=1, on_release=self.open_seller_auth_dialog)
-        content.add_widget(btn_seller)
-        self.dialog = MDDialog(title='Paramètres', type='custom', content_cls=content, buttons=[MDFlatButton(text='ANNULER', on_release=lambda x: self.dialog.dismiss()), MDRaisedButton(text='SAUVEGARDER', on_release=self.save_ip)])
+        printer_card.add_widget(row_opts)
+        box.add_widget(printer_card)
+        box.add_widget(MDBoxLayout(size_hint_y=None, height='1dp', md_bg_color=(0.9, 0.9, 0.9, 1)))
+        admin_card = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing='10dp')
+        admin_card.add_widget(MDLabel(text='Administration', font_style='Subtitle2', theme_text_color='Primary', bold=True))
+        btn_seller = MDRaisedButton(text='GÉRER LE MODE VENDEUR', md_bg_color=(0.25, 0.25, 0.25, 1), text_color=(1, 1, 1, 1), size_hint_x=1, elevation=2, on_release=self.open_seller_auth_dialog)
+        admin_card.add_widget(btn_seller)
+        box.add_widget(admin_card)
+        scroll.add_widget(box)
+        content.add_widget(scroll)
+        self.dialog = MDDialog(title='Paramètres', type='custom', content_cls=content, buttons=[MDFlatButton(text='ANNULER', theme_text_color='Custom', text_color=(0.5, 0.5, 0.5, 1), on_release=lambda x: self.dialog.dismiss()), MDRaisedButton(text='SAUVEGARDER', md_bg_color=self.theme_cls.primary_color, on_release=self.save_ip)], size_hint=(0.9, None))
         self.dialog.open()
 
     def save_ip(self, x):
@@ -1628,10 +1649,10 @@ class StockApp(MDApp):
             self.store.put('printer_config', name=p_name, mac=p_mac, auto=p_auto)
             if self.dialog:
                 self.dialog.dismiss()
-            self.notify('Configuration enregistrée', 'success')
+            self.notify('Paramètres enregistrés', 'success')
             self.check_server_heartbeat(0)
         else:
-            self.notify('IP Local invalide', 'error')
+            self.notify('Adresse IP Locale invalide', 'error')
 
     def open_seller_auth_dialog(self, x):
         if self.dialog:
@@ -2188,7 +2209,7 @@ class StockApp(MDApp):
                 display_name = self.fix_text(raw_name)
                 balance = float(e.get('balance', 0))
                 bal_text = f'{int(balance)} DA'
-                secondary_markup = f'Solde: [color={bal_color_hex}][b]{bal_text}[/size][/b][/color]'
+                secondary_markup = f'Solde: [color={bal_color_hex}][b][size=46]{bal_text}[/size][/b][/color]'
                 if balance <= 0:
                     icon_name = 'account-check'
                     icon_col = (0, 0.7, 0, 1)
@@ -2358,7 +2379,7 @@ class StockApp(MDApp):
                     old_item = self.offline_store.get(self.editing_transaction_key)
                     if old_item.get('synced') and old_item.get('order_data', {}).get('server_id'):
                         server_id_to_update = old_item['order_data']['server_id']
-            data = {'doc_type': doc_type, 'items': self.cart, 'user_name': self.current_user_name, 'timestamp': str(datetime.now()), 'table_id': None, 'seat_number': 0, 'purchase_location': self.selected_location, 'entity_id': ent_id, 'payment_info': payment_info, 'server_id': server_id_to_update}
+            data = {'doc_type': doc_type, 'items': self.cart, 'user_name': self.current_user_name, 'timestamp': str(datetime.now()), 'purchase_location': self.selected_location, 'entity_id': ent_id, 'payment_info': payment_info, 'server_id': server_id_to_update}
             self.current_editing_server_id = None
             self.editing_payment_amount = None
             if hasattr(self, 'original_doc_type'):
@@ -2574,8 +2595,6 @@ class StockApp(MDApp):
                 elif doc_type == 'RF':
                     icon_name = 'undo'
                     icon_color = (0, 0.6, 0.6, 1)
-                elif doc_type == 'BT':
-                    icon_name = 'table-furniture'
                 elif doc_type == 'FC':
                     icon_name = 'file-document'
                     icon_color = (0, 0, 0.8, 1)
@@ -2611,7 +2630,7 @@ class StockApp(MDApp):
             return
         if result:
             self.history_list_layout.add_widget(MDLabel(text='Historique Serveur', font_style='Caption', size_hint_y=None, height=dp(20)))
-        main_doc_prefixes = ['BV', 'BA', 'RC', 'RF', 'TR', 'FP', 'DP', 'BI', 'BT', 'FC', 'FF']
+        main_doc_prefixes = ['BV', 'BA', 'RC', 'RF', 'TR', 'FP', 'DP', 'BI', 'FC', 'FF']
         default_names = ['زبون افتراضي', 'مورد افتراضي', 'DEFAULT_CUSTOMER', 'DEFAULT_SUPPLIER', 'Comptoir', 'Fournisseur']
         for item in result:
             desc = str(item.get('desc', '')).strip()
@@ -2635,10 +2654,6 @@ class StockApp(MDApp):
                         entity_display = 'Dépôt -> Magasin'
                     else:
                         entity_display = 'Magasin -> Dépôt'
-                elif 'dép' in lower_raw and 'mag' not in lower_raw:
-                    entity_display = 'Dépôt -> Magasin'
-                elif 'mag' in lower_raw and 'dép' not in lower_raw:
-                    entity_display = 'Magasin -> Dépôt'
             if any((name.lower() in raw_entity_name.lower() for name in default_names)):
                 entity_display = 'COMPTOIR'
             is_main_doc = prefix in main_doc_prefixes or is_transfer
@@ -2689,8 +2704,6 @@ class StockApp(MDApp):
                 bg_col = (1, 0.95, 0.95, 1)
             elif prefix == 'RF':
                 icon_name = 'undo'
-            elif prefix == 'BT':
-                icon_name = 'table-furniture'
             elif prefix == 'FC':
                 icon_name = 'file-document'
                 full_doc_name = 'Facture Vente'
