@@ -31,6 +31,8 @@ from kivymd.uix.selectioncontrol import MDCheckbox
 from kivymd.uix.spinner import MDSpinner
 from kivymd.uix.textfield import MDTextField
 from kivymd.uix.toolbar import MDTopAppBar
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+import textwrap # لتقسيم النصوص الطويلة
 import arabic_reshaper
 import json
 import os
@@ -727,272 +729,291 @@ class StockApp(MDApp):
         self.temp_selected_mac = ''
         self.notify('Imprimante effacée', 'info')
 
-    # -----------------------------------------------------------------------------------------
-    # PRINTING LOGIC (Universal: Online/Offline, All Doc Types, Improved Layout & Arabic)
-    # -----------------------------------------------------------------------------------------
     def print_ticket_bluetooth(self, transaction_data):
         if platform != 'android':
             return
             
-        # التحقق من الإعدادات
         if not self.store.exists('printer_config'):
             self.notify('طابعة غير مهيئة', 'error')
             return
+        
         config = self.store.get('printer_config')
         target_mac = config.get('mac', '').strip()
         if not target_mac:
             return
 
-        socket = None
+        # تشغيل العملية في خلفية التطبيق لتجنب التجميد
+        threading.Thread(target=self._print_process_worker, args=(target_mac, transaction_data)).start()
+
+    def _print_process_worker(self, mac_address, data):
         try:
-            # الاتصال بالبلوتوث
+            # 1. توليد صورة الفاتورة (بالتصميم الكلاسيكي)
+            receipt_img = self.generate_classic_receipt_image(data)
+            
+            # 2. الاتصال بالطابعة
             adapter = BluetoothAdapter.getDefaultAdapter()
-            if not adapter or not adapter.isEnabled():
-                self.notify('Bluetooth OFF', 'error')
-                return
+            device = adapter.getRemoteDevice(mac_address)
+            # UUID القياسي للطابعات
+            uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+            socket = device.createRfcommSocketToServiceRecord(uuid)
+            socket.connect()
             
-            try:
-                device = adapter.getRemoteDevice(target_mac)
-                uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-                socket = device.createRfcommSocketToServiceRecord(uuid)
-                socket.connect()
-            except Exception as e:
-                self.notify('فشل الاتصال بالطابعة', 'error')
-                return
-
             output_stream = socket.getOutputStream()
-
-            # --- أوامر الطابعة (ESC/POS) ---
-            ESC = b'\x1b'
-            GS = b'\x1d'
-            INIT = ESC + b'@'
-            CUT = GS + b'V\x00'
             
-            # المحاذاة
-            CENTER = ESC + b'a\x01'
-            LEFT = ESC + b'a\x00'
-            RIGHT = ESC + b'a\x02'
+            # 3. إرسال الصورة
+            self.print_image_via_socket(output_stream, receipt_img)
             
-            # الخطوط
-            BOLD_ON = ESC + b'E\x01'
-            BOLD_OFF = ESC + b'E\x00'
-            BIG_FONT = GS + b'!\x11' 
-            NORM_FONT = GS + b'!\x00'
-            
-            # --- تفعيل اللغة العربية والفرنسية (CP1256) ---
-            # الأمر: ESC t n
-            # الرقم 22 (hex 16) هو الشائع لصفحة CP1256 في الطابعات الصينية (XPrinter وغيرها)
-            # الرقم 40 (hex 28) تستخدمه بعض الطابعات الأخرى.
-            # سنرسل الأمر لتفعيل الصفحة العربية WPC1256
-            SET_CP1256 = b'\x1b\x74\x16' 
-
-            # دوال المعالجة
-            def proc_ar(text):
-                """ 
-                معالجة النص العربي:
-                1. تشكيل الحروف (أول، وسط، آخر الكلمة).
-                2. عكس النص (لأن الطابعة تطبع من اليسار لليمين).
-                """
-                if not text:
-                    return ""
-                try:
-                    text = str(text)
-                    # التحقق من وجود حروف عربية
-                    if any('\u0600' <= char <= 'ۿ' for char in text):
-                        # reshape: يربط الحروف
-                        reshaped_text = arabic_reshaper.reshape(text)
-                        # get_display: يعكس النص للطباعة الصحيحة (Bidi)
-                        bidi_text = get_display(reshaped_text)
-                        return bidi_text
-                    return text
-                except:
-                    return str(text)
-
-            def enc(text):
-                """ 
-                تشفير النص إلى بايتات يفهمها المعالج.
-                CP1256 يدعم العربية + الحروف الفرنسية (é, è, ç, à)
-                """
-                if not text:
-                    return b""
-                try:
-                    # الترميز cp1256 هو الحل السحري لظهور العربية والفرنسية معاً
-                    return text.encode('cp1256', errors='replace')
-                except:
-                    # في حال فشل الترميز، نرسله كما هو (قد يظهر رموز خطأ لكن لا يوقف البرنامج)
-                    return text.encode('utf-8', errors='ignore')
-
-            # --- بناء الوصل ---
-            buffer = b''
-            buffer += INIT
-            buffer += SET_CP1256 # تفعيل العربية/الفرنسية
-            
-            # تأكيد التفعيل بإرسال أمر Codepage مرة أخرى للتأكيد (بعض الطابعات تحتاج تكرار)
-            buffer += b'\x1b\x52\x00' # تعيين مجموعة المحارف الدولية (International Character Set)
-
-            # 1. رأس الوصل (المتجر)
-            store_name = 'MagPro Store'
-            store_address = ''
-            store_phone = ''
-            if self.store.exists('print_header'):
-                header_conf = self.store.get('print_header')
-                store_name = header_conf.get('name', store_name)
-                store_address = header_conf.get('address', '')
-                store_phone = header_conf.get('phone', '')
-
-            # اسم المتجر (كبير)
-            buffer += CENTER + BOLD_ON + BIG_FONT + enc(proc_ar(store_name)) + b'\n' + NORM_FONT
-            
-            # العنوان والهاتف
-            if store_address:
-                buffer += enc(proc_ar(store_address)) + b'\n'
-            if store_phone:
-                buffer += enc(f'Tel: {store_phone}') + b'\n'
-            
-            # خط فاصل
-            buffer += BOLD_OFF + enc('-' * 32) + b'\n' + LEFT
-
-            # 2. معلومات الفاتورة
-            ts_str = transaction_data.get('timestamp', '')
-            if not ts_str:
-                ts_str = datetime.now().strftime('%Y-%m-%d %H:%M')
-            else:
-                try:
-                    ts_str = ts_str[:16]
-                except:
-                    pass
-            
-            user_str = transaction_data.get('user_name', self.current_user_name)
-            
-            # اسم الزبون
-            entity_name_raw = "Passager"
-            ent_id = transaction_data.get('entity_id')
-            if self.selected_entity:
-                 entity_name_raw = self.selected_entity.get('name', 'Passager')
-            elif ent_id:
-                found = next((c for c in self.all_clients if c['id'] == ent_id), None)
-                if not found:
-                    found = next((s for s in self.all_suppliers if s['id'] == ent_id), None)
-                if found:
-                    entity_name_raw = found.get('name', 'Client')
-                else:
-                     entity_name_raw = transaction_data.get('entity', 'Inconnu')
-            
-            # معالجة اسم الزبون (عربي/فرنسي)
-            client_display = proc_ar(entity_name_raw)
-
-            # نوع الوثيقة
-            doc_type = transaction_data.get('doc_type', 'BV')
-            is_simple = transaction_data.get('is_simple_payment', False)
-            doc_title = ""
-
-            if is_simple:
-                pay_type = transaction_data.get('type', '')
-                amt = float(transaction_data.get('amount', 0))
-                custom_lbl = transaction_data.get('custom_label')
-                if custom_lbl:
-                    doc_title = custom_lbl
-                else:
-                    if amt < 0:
-                        doc_title = "BON DE CREDIT" if pay_type == 'client_pay' else "DETTE"
-                    else:
-                        doc_title = "VERSEMENT" if pay_type == 'client_pay' else "REGLEMENT"
-            else:
-                labels = {
-                    'BV': 'BON DE VENTE', 'BA': "BON D'ACHAT", 'FC': 'FACTURE', 
-                    'FF': 'FACTURE ACHAT', 'RC': 'RETOUR', 'RF': 'RETOUR FOURN.',
-                    'TR': 'TRANSFERT', 'FP': 'PROFORMA', 'DP': 'COMMANDE', 'BI': 'BON INITIAL'
-                }
-                doc_title = labels.get(doc_type, doc_type)
-
-            # طباعة عنوان الوثيقة
-            buffer += CENTER + BOLD_ON + enc(proc_ar(doc_title)) + b'\n' + BOLD_OFF + LEFT
-            buffer += enc('-' * 32) + b'\n'
-            
-            # طباعة المرجع (إن وجد)
-            ref_num = transaction_data.get('invoice_number') or transaction_data.get('server_id')
-            if ref_num:
-                 buffer += enc(f"Ref : {ref_num}\n")
-            
-            buffer += enc(f"Date: {ts_str}\n")
-            buffer += enc(f"User: {proc_ar(user_str)}\n")
-            buffer += enc(f"Clnt: {client_display}\n")
-            buffer += enc('-' * 32) + b'\n'
-
-            # 3. محتوى الفاتورة (المنتجات) - (النموذج الذي أعجبك)
-            if is_simple:
-                amount = abs(float(transaction_data.get('amount', 0)))
-                buffer += CENTER + BIG_FONT + BOLD_ON
-                buffer += enc(f"MONTANT: {int(amount)} DA\n")
-                buffer += NORM_FONT + BOLD_OFF + LEFT
-            else:
-                items = transaction_data.get('items', [])
-                total = 0
-                
-                # طباعة المنتجات بنفس التنسيق الممتاز
-                for item in items:
-                    raw_prod = item.get('name', 'Article')
-                    prod_display = proc_ar(raw_prod)
-                    
-                    qty = float(item.get('qty', 0))
-                    price = float(item.get('price', 0))
-                    row_total = qty * price
-                    total += row_total
-                    
-                    qty_str = str(int(qty)) if qty.is_integer() else str(qty)
-                    price_str = f"{int(price)}"
-                    total_str = f"{int(row_total)}"
-                    
-                    # سطر 1: الاسم (عريض)
-                    buffer += BOLD_ON + enc(prod_display) + b'\n' + BOLD_OFF
-                    
-                    # سطر 2: الحسابات
-                    # محاولة محاذاة الأرقام:  5 x 100 DA   = 500 DA
-                    line_calc = f"{qty_str} x {price_str} DA"
-                    line_total = f"= {total_str} DA"
-                    
-                    # حساب المسافات للمحاذاة (عرض الورقة تقريباً 32 حرف بالخط العادي)
-                    space_needed = 32 - len(line_calc) - len(line_total)
-                    if space_needed < 1: space_needed = 1
-                    
-                    buffer += enc(line_calc + (" " * space_needed) + line_total + "\n")
-                    
-                    # سطر 3: فاصل متقطع
-                    buffer += enc("- - " * 8) + b'\n'
-
-                if doc_type != 'TR':
-                    buffer += b'\n'
-                    # المجموع الكلي
-                    buffer += RIGHT + BIG_FONT + BOLD_ON
-                    buffer += enc(f"TOTAL: {int(total)} DA\n")
-                    buffer += NORM_FONT + BOLD_OFF + LEFT
-                    
-                    # المدفوع والباقي
-                    payment = transaction_data.get('payment_info', {})
-                    paid = float(payment.get('amount', 0))
-                    if paid > 0:
-                         buffer += RIGHT
-                         buffer += enc(f"Verse: {int(paid)} DA\n")
-                         reste = total - paid
-                         label_reste = "Reste" if reste >= 0 else "Rendu"
-                         buffer += enc(f"{label_reste}: {int(abs(reste))} DA\n")
-                         buffer += LEFT
-
-            # 4. التذييل والقص
-            buffer += CENTER + enc("\nMerci de votre visite\n\n")
-            buffer += CUT
-
-            output_stream.write(buffer)
             output_stream.flush()
             socket.close()
             
         except Exception as e:
-            try:
-                if socket:
-                    socket.close()
-            except:
-                pass
-            print(f'Print Error: {e}')
+            print(f"Print Error: {e}")
+            Clock.schedule_once(lambda dt: self.notify('خطأ في الطباعة', 'error'))
+
+    def generate_classic_receipt_image(self, data):
+        # إعدادات الورقة (العرض 570 بكسل مناسب لـ 80mm)
+        WIDTH = 570 
+        MARGIN = 10
+        
+        # تحميل الخطوط
+        font_path = os.path.join(app_dir, 'font.ttf')
+        try:
+            # أحجام خطوط تحاكي الفاتورة الأصلية
+            font_header = ImageFont.truetype(font_path, 32) # اسم المتجر
+            font_title = ImageFont.truetype(font_path, 28)  # نوع الوصل
+            font_bold = ImageFont.truetype(font_path, 24)   # المجاميع والعناوين
+            font_normal = ImageFont.truetype(font_path, 22) # النصوص العادية
+            font_small = ImageFont.truetype(font_path, 20)  # التفاصيل الصغيرة
+        except:
+            font_header = font_title = font_bold = font_normal = font_small = ImageFont.load_default()
+
+        def prep_text(text):
+            if not text: return ""
+            # إعادة تشكيل النص العربي وعكسه
+            reshaped = arabic_reshaper.reshape(str(text))
+            return get_display(reshaped)
+
+        # إنشاء صورة طويلة (سيتم قصها لاحقاً)
+        temp_img = Image.new('RGB', (WIDTH, 2500), 'white')
+        d = ImageDraw.Draw(temp_img)
+        
+        y = 10 # المؤشر العمودي
+        
+        # --- 1. رأس الفاتورة (Header) ---
+        store_name = "MagPro Store"
+        store_address = ""
+        store_phone = ""
+        if self.store.exists('print_header'):
+            h = self.store.get('print_header')
+            store_name = h.get('name', store_name)
+            store_address = h.get('address', '')
+            store_phone = h.get('phone', '')
+
+        # اسم المتجر (وسط - كبير)
+        txt = prep_text(store_name)
+        bbox = d.textbbox((0, 0), txt, font=font_header)
+        d.text(((WIDTH - (bbox[2]-bbox[0])) / 2, y), txt, font=font_header, fill='black')
+        y += 40
+        
+        # العنوان والهاتف
+        if store_address:
+            txt = prep_text(store_address)
+            bbox = d.textbbox((0, 0), txt, font=font_small)
+            d.text(((WIDTH - (bbox[2]-bbox[0])) / 2, y), txt, font=font_small, fill='black')
+            y += 30
+        if store_phone:
+            txt = prep_text(f"Tel: {store_phone}")
+            bbox = d.textbbox((0, 0), txt, font=font_small)
+            d.text(((WIDTH - (bbox[2]-bbox[0])) / 2, y), txt, font=font_small, fill='black')
+            y += 30
+
+        # خط فاصل
+        d.line([(0, y), (WIDTH, y)], fill='black', width=2)
+        y += 10
+
+        # --- 2. تفاصيل الوصل ---
+        # التاريخ والوقت
+        ts = data.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M'))
+        d.text((MARGIN, y), f"Date: {ts}", font=font_small, fill='black')
+        y += 30
+
+        # نوع الوصل (وسط - عريض)
+        doc_type = data.get('doc_type', 'BV')
+        is_simple = data.get('is_simple_payment', False)
+        doc_title = doc_type
+        
+        if is_simple:
+            amt = float(data.get('amount', 0))
+            if amt < 0: doc_title = "BON DE CREDIT"
+            else: doc_title = "BON DE VERSEMENT"
+        else:
+            labels = {'BV': 'BON DE VENTE', 'BA': "BON D'ACHAT", 'FC': 'FACTURE', 'RC': 'RETOUR CLIENT', 'RF': 'RETOUR FOURNISSEUR', 'TR': 'TRANSFERT', 'FP': 'PROFORMA', 'DP': 'COMMANDE', 'BI': 'BON INITIAL'}
+            doc_title = labels.get(doc_type, doc_type)
+            
+        txt = prep_text(doc_title)
+        bbox = d.textbbox((0, 0), txt, font=font_title)
+        d.text(((WIDTH - (bbox[2]-bbox[0])) / 2, y), txt, font=font_title, fill='black')
+        y += 40
+
+        # رقم الوصل / المرجع
+        ref = data.get('invoice_number') or data.get('server_id')
+        if ref:
+            txt = prep_text(f"Bon N° : {ref}")
+            d.text((MARGIN, y), txt, font=font_normal, fill='black')
+            y += 30
+
+        # المستخدم والعميل
+        user = prep_text(data.get('user_name', 'Admin'))
+        d.text((MARGIN, y), f"User : {user}", font=font_small, fill='black')
+        y += 25
+        
+        entity_name = "Passager"
+        if self.selected_entity:
+            entity_name = self.selected_entity.get('name')
+        elif data.get('entity'):
+            entity_name = data.get('entity')
+        
+        client_txt = prep_text(f"Client : {entity_name}")
+        d.text((MARGIN, y), client_txt, font=font_bold, fill='black')
+        y += 35
+
+        d.line([(0, y), (WIDTH, y)], fill='black', width=2)
+        y += 5
+
+        # --- 3. المنتجات (النموذج الكلاسيكي) ---
+        if is_simple:
+            # وصل دفع فقط
+            y += 20
+            amt = abs(float(data.get('amount', 0)))
+            txt = prep_text(f"MONTANT: {int(amt)} DA")
+            bbox = d.textbbox((0, 0), txt, font=font_header)
+            d.text(((WIDTH - (bbox[2]-bbox[0])) / 2, y), txt, font=font_header, fill='black')
+            y += 50
+        else:
+            # رأس الجدول (Article .... Qte .... Prix)
+            # تقسيم العرض: الاسم (55%)، الكمية (15%)، السعر (30%)
+            col1_x = MARGIN
+            col2_x = WIDTH * 0.60
+            col3_x = WIDTH * 0.80
+            
+            d.text((col1_x, y), prep_text("Article"), font=font_bold, fill='black')
+            d.text((col2_x, y), prep_text("Qte"), font=font_bold, fill='black')
+            d.text((col3_x, y), prep_text("Prix"), font=font_bold, fill='black')
+            y += 30
+            d.line([(MARGIN, y), (WIDTH-MARGIN, y)], fill='black', width=1)
+            y += 10
+
+            items = data.get('items', [])
+            total = 0
+            
+            for item in items:
+                name = prep_text(item.get('name', 'Item'))
+                qty = float(item.get('qty', 0))
+                price = float(item.get('price', 0))
+                row_total = qty * price
+                total += row_total
+                
+                qty_s = str(int(qty)) if qty.is_integer() else str(qty)
+                price_s = str(int(price))
+                
+                # استخدام textwrap لاسم المنتج لضمان عدم تداخله
+                import textwrap
+                # عرض العمود الأول تقريباً 20 حرف
+                lines = textwrap.wrap(name, width=22)
+                
+                # طباعة السطر الأول مع الكمية والسعر
+                d.text((col1_x, y), lines[0], font=font_normal, fill='black')
+                d.text((col2_x, y), qty_s, font=font_normal, fill='black')
+                d.text((col3_x, y), price_s, font=font_normal, fill='black')
+                y += 25
+                
+                # طباعة باقي سطور الاسم إن وجدت
+                for line in lines[1:]:
+                    d.text((col1_x, y), line, font=font_normal, fill='black')
+                    y += 25
+                
+                # مسافة صغيرة بين المنتجات
+                y += 5
+
+            d.line([(0, y), (WIDTH, y)], fill='black', width=2)
+            y += 10
+
+            # --- 4. المجاميع (Totals) ---
+            if doc_type != 'TR':
+                # المجموع الكلي (يمين)
+                total_txt = prep_text(f"TOTAL: {int(total)} DA")
+                bbox = d.textbbox((0, 0), total_txt, font=font_header)
+                d.text((WIDTH - MARGIN - (bbox[2]-bbox[0]), y), total_txt, font=font_header, fill='black')
+                y += 40
+                
+                # الدفع والباقي
+                payment = data.get('payment_info', {})
+                paid = float(payment.get('amount', 0))
+                if paid > 0:
+                    d.text((MARGIN, y), prep_text(f"Verse: {int(paid)} DA"), font=font_normal, fill='black')
+                    y += 25
+                    reste = total - paid
+                    lbl = "Reste" if reste >= 0 else "Rendu"
+                    d.text((MARGIN, y), prep_text(f"{lbl}: {int(abs(reste))} DA"), font=font_normal, fill='black')
+                    y += 30
+
+        # --- 5. التذييل ---
+        y += 20
+        d.line([(MARGIN*4, y), (WIDTH-MARGIN*4, y)], fill='black', width=1)
+        y += 10
+        txt = prep_text("Merci de votre visite")
+        bbox = d.textbbox((0, 0), txt, font=font_normal)
+        d.text(((WIDTH - (bbox[2]-bbox[0])) / 2, y), txt, font=font_normal, fill='black')
+        
+        # هامش للقص
+        y += 60
+        
+        return temp_img.crop((0, 0, WIDTH, y))
+
+    def print_image_via_socket(self, output_stream, image):
+        """ تحويل الصورة وإرسالها بأوامر ESC/POS """
+        # تحويل لأبيض وأسود
+        image = image.convert('1') 
+        width, height = image.size
+        
+        # المحاذاة (توسيط)
+        output_stream.write(b'\x1b\x61\x01') 
+
+        # تقسيم الصورة لشرائح صغيرة لتجنب امتلاء ذاكرة الطابعة (Buffer)
+        # هذا يحل مشاكل الطباعة الطويلة
+        chunk_height = 255
+        for i in range(0, height, chunk_height):
+            # تحديد الشريحة الحالية
+            h = min(chunk_height, height - i)
+            chunk = image.crop((0, i, width, i + h))
+            
+            # التأكد من العرض
+            w = chunk.width
+            if w % 8 != 0:
+                w = (w // 8 + 1) * 8
+                new_c = Image.new('1', (w, h), 'white')
+                new_c.paste(chunk, (0,0))
+                chunk = new_c
+
+            # تحويل البيانات
+            data = chunk.tobytes()
+            # عكس البتات (PIL 1=White, Printer 1=Black)
+            inverted_data = bytearray([b ^ 0xFF for b in data])
+            
+            xL = (w // 8) % 256
+            xH = (w // 8) // 256
+            yL = h % 256
+            yH = h // 256
+            
+            # GS v 0 command
+            cmd = b'\x1d\x76\x30\x00' + bytes([xL, xH, yL, yH])
+            output_stream.write(cmd)
+            output_stream.write(inverted_data)
+            # تأخير بسيط جداً
+            time.sleep(0.05)
+
+        # تغذية وقص
+        output_stream.write(b'\x1d\x56\x42\x03')
 
     def build(self):
         Builder.load_string(KV_BUILDER)
@@ -2870,10 +2891,14 @@ class StockApp(MDApp):
         try:
             excess_amount = 0
             invoice_paid_amount = paid_amount
-            is_real_transaction = self.current_mode not in ['proforma', 'order_purchase']
+            
+            # العمليات التي تؤثر في الإحصائيات المالية اليومية
+            is_real_transaction = self.current_mode not in ['proforma', 'order_purchase', 'transfer']
+            
             if is_real_transaction and self.current_mode in ['sale', 'purchase', 'invoice_sale', 'invoice_purchase'] and (paid_amount > total_amount):
                 excess_amount = paid_amount - total_amount
                 invoice_paid_amount = total_amount
+            
             if is_real_transaction:
                 if self.current_mode in ['sale', 'invoice_sale']:
                     self.stat_sales_today += invoice_paid_amount
@@ -2885,12 +2910,16 @@ class StockApp(MDApp):
                     self.stat_purchases_today -= invoice_paid_amount
                 self.calculate_net_total()
                 self.save_local_stats()
+            
             doc_type_map = {'sale': 'BV', 'purchase': 'BA', 'return_sale': 'RC', 'return_purchase': 'RF', 'transfer': 'TR', 'invoice_sale': 'FC', 'invoice_purchase': 'FF', 'proforma': 'FP', 'order_purchase': 'DP'}
             doc_type = doc_type_map.get(self.current_mode, 'BV')
+            
             if hasattr(self, 'original_doc_type') and self.original_doc_type == 'BI' and (self.current_mode == 'purchase'):
                 doc_type = 'BI'
+            
             ent_id = self.selected_entity['id'] if self.selected_entity else None
             payment_info = {'amount': invoice_paid_amount, 'total': total_amount}
+            
             server_id_to_update = None
             if self.editing_transaction_key:
                 if self.editing_transaction_key == 'SERVER_EDIT_MODE':
@@ -2899,16 +2928,25 @@ class StockApp(MDApp):
                     old_item = self.offline_store.get(self.editing_transaction_key)
                     if old_item.get('synced') and old_item.get('order_data', {}).get('server_id'):
                         server_id_to_update = old_item['order_data']['server_id']
+            
             data = {'doc_type': doc_type, 'items': self.cart, 'user_name': self.current_user_name, 'timestamp': str(datetime.now()), 'purchase_location': self.selected_location, 'entity_id': ent_id, 'payment_info': payment_info, 'server_id': server_id_to_update}
+            
             self.current_editing_server_id = None
             self.editing_payment_amount = None
             if hasattr(self, 'original_doc_type'):
                 del self.original_doc_type
 
+            # --- الدالة الداخلية لإنهاء العملية والطباعة ---
             def finalize_process(req=None, res=None):
                 self.is_transaction_in_progress = False
                 try:
-                    if self.current_mode in ['sale', 'invoice_sale', 'return_sale']:
+                    # (تعديل) السماح بالطباعة لكل الأوضاع
+                    printable_modes = [
+                        'sale', 'invoice_sale', 'return_sale', 
+                        'purchase', 'invoice_purchase', 'return_purchase', 
+                        'order_purchase', 'proforma', 'transfer'
+                    ]
+                    if self.current_mode in printable_modes:
                         if self.store.exists('printer_config'):
                             conf = self.store.get('printer_config')
                             if conf.get('auto', False) and conf.get('mac', ''):
@@ -2932,20 +2970,24 @@ class StockApp(MDApp):
                 else:
                     self.stat_supplier_payments += excess_amount
                 self.save_local_stats()
+                
                 pay_data = {'entity_id': ent_id, 'amount': excess_amount, 'type': p_type, 'custom_label': c_label, 'user_name': self.current_user_name, 'note': 'Automatique', 'is_simple_payment': True, 'timestamp': str(datetime.now()), 'server_id': None}
+                
                 UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/submit_payment', req_body=json.dumps(pay_data), req_headers={'Content-type': 'application/json'}, method='POST', on_success=lambda r, s: [self.notify(f'Reste ({int(excess_amount)}) enregistré', 'success'), finalize_process()], on_failure=lambda r, e: finalize_process(), timeout=10)
+            
             if self.is_server_reachable:
-
                 def on_invoice_success(req, res):
                     if res.get('server_id'):
                         data['server_id'] = res.get('server_id')
                     if res.get('invoice_number'):
-                        data['invoice_number'] = res.get('invoice_number') # Get Invoice ID for online print
+                        data['invoice_number'] = res.get('invoice_number') # للحصول على الرقم من السيرفر
+                        
                     self.save_to_history(data, synced=True)
                     if excess_amount > 0:
                         send_excess()
                     else:
                         finalize_process()
+                        
                 UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/submit_order', req_body=json.dumps(data), req_headers={'Content-type': 'application/json'}, method='POST', on_success=on_invoice_success, on_error=on_fail, on_failure=on_fail, timeout=10)
             else:
                 if excess_amount > 0:
@@ -2953,6 +2995,7 @@ class StockApp(MDApp):
                     local_label = 'Versement' if self.current_mode in ['sale', 'invoice_sale'] else 'Règlement'
                     pay_data = {'entity_id': ent_id, 'amount': excess_amount, 'type': p_type, 'custom_label': local_label, 'user_name': self.current_user_name, 'is_simple_payment': True, 'timestamp': str(datetime.now())}
                     self.save_to_history(pay_data, synced=False)
+                
                 self.is_transaction_in_progress = False
                 self.save_offline_and_ui(data)
         except Exception as e:
@@ -2971,15 +3014,20 @@ class StockApp(MDApp):
         # حفظ البيانات في قاعدة البيانات المحلية (JSON)
         self.save_to_history(data, synced=False)
         
-        # --- إضافة: طباعة الوصل في وضع الأوفلاين ---
+        # --- (تعديل) طباعة الوصل لجميع الأنواع ---
         try:
-            # التحقق من إعداد الطباعة التلقائية
-            if self.current_mode in ['sale', 'invoice_sale', 'return_sale']:
+            # قائمة الأوضاع المسموح لها بالطباعة (شملنا الكل الآن)
+            printable_modes = [
+                'sale', 'invoice_sale', 'return_sale', 
+                'purchase', 'invoice_purchase', 'return_purchase', 
+                'order_purchase', 'proforma', 'transfer'
+            ]
+            
+            if self.current_mode in printable_modes:
                 if self.store.exists('printer_config'):
                     conf = self.store.get('printer_config')
                     # الطباعة إذا كان الوضع "تلقائي" ومحدد طابعة
                     if conf.get('auto', False) and conf.get('mac', ''):
-                        # نستخدم thread لكي لا يتجمد التطبيق
                         threading.Thread(target=self.print_ticket_bluetooth, args=(data,), daemon=True).start()
         except Exception as e:
             print(f"Offline Print Error: {e}")
@@ -2994,8 +3042,7 @@ class StockApp(MDApp):
                 payment_info = data.get('payment_info', {})
                 paid_amount = float(payment_info.get('amount', 0))
                 
-                # المعادلة: التغير في الرصيد = (قيمة الفاتورة) - (المدفوع)
-                # بيع (دين يزداد) - مدفوع (دين ينقص)
+                # المعادلة: التغير في الرصيد
                 net_change = (total_amount * balance_sign) - paid_amount
                 self.update_local_entity_balance(data['entity_id'], net_change)
         except Exception as e:
