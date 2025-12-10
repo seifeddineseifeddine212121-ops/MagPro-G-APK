@@ -731,146 +731,161 @@ class StockApp(MDApp):
     # PRINTING LOGIC (Universal: Online/Offline, All Doc Types, Improved Layout & Arabic)
     # -----------------------------------------------------------------------------------------
     def print_ticket_bluetooth(self, transaction_data):
-        """
-        دالة طباعة تدعم اللغة العربية للطابعات الحرارية (ESC/POS)
-        تستخدم ترميز CP1256 وتشكيل الحروف العربية.
-        """
         if platform != 'android':
-            self.notify('الطباعة متاحة فقط على Android', 'error')
             return
             
-        # 1. التحقق من الإعدادات
+        # التحقق من الإعدادات
         if not self.store.exists('printer_config'):
             self.notify('طابعة غير مهيئة', 'error')
             return
-            
         config = self.store.get('printer_config')
         target_mac = config.get('mac', '').strip()
         if not target_mac:
-            self.notify('لم يتم تحديد طابعة في الإعدادات', 'error')
             return
 
-        sock = None
+        socket = None
         try:
-            # 2. الاتصال بالبلوتوث
+            # الاتصال بالبلوتوث
             adapter = BluetoothAdapter.getDefaultAdapter()
             if not adapter or not adapter.isEnabled():
-                self.notify('Bluetooth غير مفعل', 'error')
+                self.notify('Bluetooth OFF', 'error')
                 return
-            
-            device = adapter.getRemoteDevice(target_mac)
-            # UUID القياسي للطابعات (SPP)
-            uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
             
             try:
-                sock = device.createRfcommSocketToServiceRecord(uuid)
-                sock.connect()
+                device = adapter.getRemoteDevice(target_mac)
+                uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+                socket = device.createRfcommSocketToServiceRecord(uuid)
+                socket.connect()
             except Exception as e:
-                self.notify(f'فشل الاتصال: {e}', 'error')
+                self.notify('فشل الاتصال بالطابعة', 'error')
                 return
 
-            output_stream = sock.getOutputStream()
+            output_stream = socket.getOutputStream()
 
             # --- أوامر الطابعة (ESC/POS) ---
             ESC = b'\x1b'
             GS = b'\x1d'
-            
-            # تهيئة
             INIT = ESC + b'@'
+            CUT = GS + b'V\x00'
             
             # المحاذاة
-            ALIGN_CENTER = ESC + b'a\x01'
-            ALIGN_LEFT = ESC + b'a\x00'
-            ALIGN_RIGHT = ESC + b'a\x02'
+            CENTER = ESC + b'a\x01'
+            LEFT = ESC + b'a\x00'
+            RIGHT = ESC + b'a\x02'
             
             # الخطوط
             BOLD_ON = ESC + b'E\x01'
             BOLD_OFF = ESC + b'E\x00'
-            FONT_2X = GS + b'!\x11'  # تكبير مضاعف
-            FONT_NORMAL = GS + b'!\x00'
+            BIG_FONT = GS + b'!\x11' 
+            NORM_FONT = GS + b'!\x00'
             
-            # القص
-            CUT = GS + b'V\x00'
+            # --- تفعيل اللغة العربية والفرنسية (CP1256) ---
+            # الأمر: ESC t n
+            # الرقم 22 (hex 16) هو الشائع لصفحة CP1256 في الطابعات الصينية (XPrinter وغيرها)
+            # الرقم 40 (hex 28) تستخدمه بعض الطابعات الأخرى.
+            # سنرسل الأمر لتفعيل الصفحة العربية WPC1256
+            SET_CP1256 = b'\x1b\x74\x16' 
 
-            # --- تفعيل اللغة العربية (CP1256) ---
-            # الرقم 22 (hex 16) هو الشائع لـ Arabic CP1256 في طابعات XPrinter
-            # إذا ظهرت رموز غريبة، جرب تغيير \x16 إلى \x06 أو \x28
-            SET_CP1256 = ESC + b't\x16' 
-
-            # --- دوال المعالجة النصية ---
-            def process_text(text, max_chars=32):
+            # دوال المعالجة
+            def proc_ar(text):
+                """ 
+                معالجة النص العربي:
+                1. تشكيل الحروف (أول، وسط، آخر الكلمة).
+                2. عكس النص (لأن الطابعة تطبع من اليسار لليمين).
                 """
-                1. إعادة تشكيل الحروف العربية (بداية/وسط/نهاية).
-                2. عكس الاتجاه (Bidi) للنص العربي.
-                3. تحويل النص إلى بايتات بترميز cp1256.
+                if not text:
+                    return ""
+                try:
+                    text = str(text)
+                    # التحقق من وجود حروف عربية
+                    if any('\u0600' <= char <= 'ۿ' for char in text):
+                        # reshape: يربط الحروف
+                        reshaped_text = arabic_reshaper.reshape(text)
+                        # get_display: يعكس النص للطباعة الصحيحة (Bidi)
+                        bidi_text = get_display(reshaped_text)
+                        return bidi_text
+                    return text
+                except:
+                    return str(text)
+
+            def enc(text):
+                """ 
+                تشفير النص إلى بايتات يفهمها المعالج.
+                CP1256 يدعم العربية + الحروف الفرنسية (é, è, ç, à)
                 """
                 if not text:
                     return b""
                 try:
-                    text_str = str(text)
-                    # 1. Reshape (تشكيل)
-                    # خيار configuration يضمن دمج اللامات وحذف الحركات
-                    reshaped_text = reshaper.reshape(text_str)
-                    
-                    # 2. Bidi (عكس الاتجاه للعرض الصحيح)
-                    bidi_text = get_display(reshaped_text)
-                    
-                    # 3. Encode to CP1256 (ترميز الطابعة)
-                    # errors='replace' يستبدل الحروف غير المدعومة بـ ? لتجنب توقف التطبيق
-                    return bidi_text.encode('cp1256', errors='replace')
-                except Exception as e:
-                    # في حال الفشل، نرسل النص كما هو بترميز utf-8 كاحتياط
-                    print(f"Text processing error: {e}")
-                    return str(text).encode('utf-8', errors='ignore')
+                    # الترميز cp1256 هو الحل السحري لظهور العربية والفرنسية معاً
+                    return text.encode('cp1256', errors='replace')
+                except:
+                    # في حال فشل الترميز، نرسله كما هو (قد يظهر رموز خطأ لكن لا يوقف البرنامج)
+                    return text.encode('utf-8', errors='ignore')
 
-            # --- بناء محتوى الوصل (Buffer) ---
+            # --- بناء الوصل ---
             buffer = b''
             buffer += INIT
-            buffer += SET_CP1256 # تفعيل العربية فوراً
+            buffer += SET_CP1256 # تفعيل العربية/الفرنسية
+            
+            # تأكيد التفعيل بإرسال أمر Codepage مرة أخرى للتأكيد (بعض الطابعات تحتاج تكرار)
+            buffer += b'\x1b\x52\x00' # تعيين مجموعة المحارف الدولية (International Character Set)
 
-            # 1. رأس الوصل (معلومات المتجر)
+            # 1. رأس الوصل (المتجر)
             store_name = 'MagPro Store'
             store_address = ''
             store_phone = ''
-            
             if self.store.exists('print_header'):
                 header_conf = self.store.get('print_header')
                 store_name = header_conf.get('name', store_name)
                 store_address = header_conf.get('address', '')
                 store_phone = header_conf.get('phone', '')
 
-            # طباعة اسم المتجر (وسط، عريض، كبير)
-            buffer += ALIGN_CENTER + BOLD_ON + FONT_2X
-            buffer += process_text(store_name) + b'\n'
-            buffer += FONT_NORMAL + BOLD_OFF
+            # اسم المتجر (كبير)
+            buffer += CENTER + BOLD_ON + BIG_FONT + enc(proc_ar(store_name)) + b'\n' + NORM_FONT
             
+            # العنوان والهاتف
             if store_address:
-                buffer += process_text(store_address) + b'\n'
+                buffer += enc(proc_ar(store_address)) + b'\n'
             if store_phone:
-                buffer += process_text(f'Tel: {store_phone}') + b'\n'
+                buffer += enc(f'Tel: {store_phone}') + b'\n'
             
-            buffer += b'-' * 32 + b'\n' + ALIGN_LEFT
+            # خط فاصل
+            buffer += BOLD_OFF + enc('-' * 32) + b'\n' + LEFT
 
-            # 2. تفاصيل الفاتورة
-            # تحديد اسم الزبون
+            # 2. معلومات الفاتورة
+            ts_str = transaction_data.get('timestamp', '')
+            if not ts_str:
+                ts_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+            else:
+                try:
+                    ts_str = ts_str[:16]
+                except:
+                    pass
+            
+            user_str = transaction_data.get('user_name', self.current_user_name)
+            
+            # اسم الزبون
             entity_name_raw = "Passager"
             ent_id = transaction_data.get('entity_id')
-            if transaction_data.get('entity'):
-                entity_name_raw = transaction_data.get('entity')
-            elif self.selected_entity:
+            if self.selected_entity:
                  entity_name_raw = self.selected_entity.get('name', 'Passager')
+            elif ent_id:
+                found = next((c for c in self.all_clients if c['id'] == ent_id), None)
+                if not found:
+                    found = next((s for s in self.all_suppliers if s['id'] == ent_id), None)
+                if found:
+                    entity_name_raw = found.get('name', 'Client')
+                else:
+                     entity_name_raw = transaction_data.get('entity', 'Inconnu')
             
-            # تحديد نوع الوثيقة
+            # معالجة اسم الزبون (عربي/فرنسي)
+            client_display = proc_ar(entity_name_raw)
+
+            # نوع الوثيقة
             doc_type = transaction_data.get('doc_type', 'BV')
             is_simple = transaction_data.get('is_simple_payment', False)
-            doc_title = "BON"
+            doc_title = ""
 
-            labels = {
-                'BV': 'BON DE VENTE', 'BA': "BON D'ACHAT", 'FC': 'FACTURE', 
-                'FF': 'FACTURE ACHAT', 'RC': 'RETOUR CLIENT', 'RF': 'RETOUR FOURN.',
-                'TR': 'TRANSFERT', 'FP': 'PROFORMA', 'DP': 'COMMANDE', 'BI': 'BON INITIAL'
-            }
-            
             if is_simple:
                 pay_type = transaction_data.get('type', '')
                 amt = float(transaction_data.get('amount', 0))
@@ -878,108 +893,106 @@ class StockApp(MDApp):
                 if custom_lbl:
                     doc_title = custom_lbl
                 else:
-                    doc_title = "VERSEMENT" if (amt >= 0 and pay_type == 'client_pay') else "CREDIT"
+                    if amt < 0:
+                        doc_title = "BON DE CREDIT" if pay_type == 'client_pay' else "DETTE"
+                    else:
+                        doc_title = "VERSEMENT" if pay_type == 'client_pay' else "REGLEMENT"
             else:
+                labels = {
+                    'BV': 'BON DE VENTE', 'BA': "BON D'ACHAT", 'FC': 'FACTURE', 
+                    'FF': 'FACTURE ACHAT', 'RC': 'RETOUR', 'RF': 'RETOUR FOURN.',
+                    'TR': 'TRANSFERT', 'FP': 'PROFORMA', 'DP': 'COMMANDE', 'BI': 'BON INITIAL'
+                }
                 doc_title = labels.get(doc_type, doc_type)
 
             # طباعة عنوان الوثيقة
-            buffer += ALIGN_CENTER + BOLD_ON
-            buffer += process_text(doc_title) + b'\n'
-            buffer += BOLD_OFF + ALIGN_LEFT
-            buffer += b'-' * 32 + b'\n'
+            buffer += CENTER + BOLD_ON + enc(proc_ar(doc_title)) + b'\n' + BOLD_OFF + LEFT
+            buffer += enc('-' * 32) + b'\n'
             
-            # المعلومات الأساسية (رقم، تاريخ، مستخدم، زبون)
-            ts_str = transaction_data.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M'))
-            try: ts_str = ts_str[:16] 
-            except: pass
-            
-            ref_num = transaction_data.get('invoice_number') or transaction_data.get('server_id', '')
-            user_str = transaction_data.get('user_name', self.current_user_name)
-
-            # نستخدم التنسيق اليدوي للبايتات لضمان المحاذاة مع العربية
+            # طباعة المرجع (إن وجد)
+            ref_num = transaction_data.get('invoice_number') or transaction_data.get('server_id')
             if ref_num:
-                buffer += process_text(f"Ref: {ref_num}") + b'\n'
-            buffer += process_text(f"Date: {ts_str}") + b'\n'
-            buffer += process_text(f"User: {user_str}") + b'\n'
+                 buffer += enc(f"Ref : {ref_num}\n")
             
-            # اسم الزبون (قد يكون عربياً)
-            buffer += process_text(f"Client: {entity_name_raw}") + b'\n'
-            buffer += b'-' * 32 + b'\n'
+            buffer += enc(f"Date: {ts_str}\n")
+            buffer += enc(f"User: {proc_ar(user_str)}\n")
+            buffer += enc(f"Clnt: {client_display}\n")
+            buffer += enc('-' * 32) + b'\n'
 
-            # 3. المحتوى (المنتجات أو المبلغ)
+            # 3. محتوى الفاتورة (المنتجات) - (النموذج الذي أعجبك)
             if is_simple:
-                # وصل دفع بسيط
                 amount = abs(float(transaction_data.get('amount', 0)))
-                buffer += ALIGN_CENTER + FONT_2X + BOLD_ON
-                buffer += process_text(f"MONTANT: {int(amount)} DA") + b'\n'
-                buffer += FONT_NORMAL + BOLD_OFF + ALIGN_LEFT
+                buffer += CENTER + BIG_FONT + BOLD_ON
+                buffer += enc(f"MONTANT: {int(amount)} DA\n")
+                buffer += NORM_FONT + BOLD_OFF + LEFT
             else:
-                # جدول المنتجات
                 items = transaction_data.get('items', [])
                 total = 0
                 
-                # طباعة المنتجات
+                # طباعة المنتجات بنفس التنسيق الممتاز
                 for item in items:
                     raw_prod = item.get('name', 'Article')
+                    prod_display = proc_ar(raw_prod)
+                    
                     qty = float(item.get('qty', 0))
                     price = float(item.get('price', 0))
                     row_total = qty * price
                     total += row_total
                     
-                    qty_fmt = int(qty) if qty.is_integer() else qty
+                    qty_str = str(int(qty)) if qty.is_integer() else str(qty)
+                    price_str = f"{int(price)}"
+                    total_str = f"{int(row_total)}"
                     
-                    # السطر الأول: اسم المنتج (محاذاة لليمين إذا كان عربياً يبدو أفضل، لكن اليسار قياسي)
-                    buffer += ALIGN_RIGHT
-                    buffer += BOLD_ON + process_text(raw_prod) + b'\n' + BOLD_OFF
+                    # سطر 1: الاسم (عريض)
+                    buffer += BOLD_ON + enc(prod_display) + b'\n' + BOLD_OFF
                     
-                    # السطر الثاني: الحسابات (باليسار لأنها أرقام)
-                    # Format: 5 x 1000 = 5000 DA
-                    line_math = f"{qty_fmt} x {int(price)} = {int(row_total)} DA"
-                    buffer += ALIGN_LEFT + process_text(line_math) + b'\n'
+                    # سطر 2: الحسابات
+                    # محاولة محاذاة الأرقام:  5 x 100 DA   = 500 DA
+                    line_calc = f"{qty_str} x {price_str} DA"
+                    line_total = f"= {total_str} DA"
                     
-                    # فاصل خفيف
-                    buffer += process_text("- - " * 8) + b'\n'
+                    # حساب المسافات للمحاذاة (عرض الورقة تقريباً 32 حرف بالخط العادي)
+                    space_needed = 32 - len(line_calc) - len(line_total)
+                    if space_needed < 1: space_needed = 1
+                    
+                    buffer += enc(line_calc + (" " * space_needed) + line_total + "\n")
+                    
+                    # سطر 3: فاصل متقطع
+                    buffer += enc("- - " * 8) + b'\n'
 
                 if doc_type != 'TR':
-                    buffer += b'\n' + b'-' * 32 + b'\n'
+                    buffer += b'\n'
                     # المجموع الكلي
-                    buffer += ALIGN_CENTER + BOLD_ON + FONT_2X
-                    buffer += process_text(f"TOTAL: {int(total)} DA") + b'\n'
-                    buffer += FONT_NORMAL + BOLD_OFF + ALIGN_LEFT
+                    buffer += RIGHT + BIG_FONT + BOLD_ON
+                    buffer += enc(f"TOTAL: {int(total)} DA\n")
+                    buffer += NORM_FONT + BOLD_OFF + LEFT
                     
-                    # الدفع والباقي (إن وجد)
+                    # المدفوع والباقي
                     payment = transaction_data.get('payment_info', {})
                     paid = float(payment.get('amount', 0))
                     if paid > 0:
-                         buffer += b'\n'
+                         buffer += RIGHT
+                         buffer += enc(f"Verse: {int(paid)} DA\n")
                          reste = total - paid
-                         lbl_reste = "Reste" if reste >= 0 else "Rendu" # الباقي أو المرتجع
-                         
-                         buffer += process_text(f"Verse: {int(paid)} DA") + b'\n'
-                         buffer += process_text(f"{lbl_reste}: {int(abs(reste))} DA") + b'\n'
+                         label_reste = "Reste" if reste >= 0 else "Rendu"
+                         buffer += enc(f"{label_reste}: {int(abs(reste))} DA\n")
+                         buffer += LEFT
 
-            # 4. التذييل
-            buffer += b'\n' + ALIGN_CENTER
-            buffer += process_text("Merci de votre visite") + b'\n'
-            buffer += process_text("شكرأ لزيارتكم") + b'\n' # تجربة سطر عربي صريح
-            buffer += b'\n\n'
+            # 4. التذييل والقص
+            buffer += CENTER + enc("\nMerci de votre visite\n\n")
             buffer += CUT
 
-            # إرسال البيانات
             output_stream.write(buffer)
             output_stream.flush()
-            
-            # إغلاق الاتصال
-            sock.close()
+            socket.close()
             
         except Exception as e:
             try:
-                if sock:
-                    sock.close()
+                if socket:
+                    socket.close()
             except:
                 pass
             print(f'Print Error: {e}')
-            self.notify(f'خطأ الطباعة: {e}', 'error')
 
     def build(self):
         Builder.load_string(KV_BUILDER)
