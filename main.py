@@ -32,6 +32,7 @@ from kivymd.uix.spinner import MDSpinner
 from kivymd.uix.textfield import MDTextField
 from kivymd.uix.toolbar import MDTopAppBar
 from PIL import Image, ImageDraw, ImageFont
+import time
 import arabic_reshaper
 import json
 import os
@@ -41,7 +42,6 @@ import socket
 import sys
 import textwrap
 import threading
-import time
 
 if platform == 'android':
     from jnius import autoclass
@@ -418,15 +418,18 @@ class StockApp(MDApp):
             CUT = GS + b'V\x00'
             
             output_stream.write(INIT)
+            time.sleep(0.1)
             
             chunk_size = 1024
             for i in range(0, len(raster_data), chunk_size):
                 output_stream.write(raster_data[i:i+chunk_size])
                 output_stream.flush()
+                time.sleep(0.02)
                 
             output_stream.write(b'\n\n\n')
             output_stream.write(CUT)
             output_stream.flush()
+            time.sleep(0.1)
             
             socket.close()
         except Exception as e:
@@ -469,7 +472,7 @@ class StockApp(MDApp):
         try:
             font_size_reg = 24
             font_size_large = 40
-            font_size_med = 30
+            font_size_med = 28
             font_reg = ImageFont.truetype(FONT_FILE, font_size_reg)
             font_bold = ImageFont.truetype(FONT_FILE, font_size_reg)
             font_large = ImageFont.truetype(FONT_FILE, font_size_large)
@@ -509,15 +512,19 @@ class StockApp(MDApp):
             draw.line([(margin, curr_y), (PAPER_WIDTH - margin, curr_y)], fill=(0,0,0), width=2)
             return curr_y + 10
 
-        def draw_lr(left, right, font, y_pos):
+        def draw_lr(left, right, font, y_pos, is_bold=False):
             l = proc_ar(left)
             r = proc_ar(right)
             bbox_r = font.getbbox(r)
+            bbox_l = font.getbbox(l)
             w_r = bbox_r[2] - bbox_r[0]
             x_r = PAPER_WIDTH - w_r - margin
             draw.text((margin, y_pos), l, font=font, fill=(0, 0, 0))
             draw.text((x_r, y_pos), r, font=font, fill=(0, 0, 0))
-            return max(bbox_r[3] - bbox_r[1], 30) + 5
+            if is_bold:
+                draw.text((margin+1, y_pos), l, font=font, fill=(0, 0, 0))
+                draw.text((x_r+1, y_pos), r, font=font, fill=(0, 0, 0))
+            return max(bbox_r[3] - bbox_r[1], bbox_l[3] - bbox_l[1], 30) + 8
 
         y = 10
         store_name = 'MagPro Store'
@@ -620,15 +627,17 @@ class StockApp(MDApp):
 
             if doc_type != 'TR':
                 y += 10
-                y += draw_lr("TOTAL:", f"{int(total)} DA", font_large, y)
+                y += draw_lr("TOTAL:", f"{int(total)} DA", font_large, y, True)
+                y += 10
                 
                 payment = transaction_data.get('payment_info', {})
                 paid = float(payment.get('amount', 0))
-                if paid > 0:
-                    y += draw_lr("Verse:", f"{int(paid)} DA", font_med, y)
-                    reste = total - paid
-                    label_reste = 'Reste' if reste >= 0 else 'Rendu'
-                    y += draw_lr(f"{label_reste}:", f"{int(abs(reste))} DA", font_med, y)
+                
+                y += draw_lr("VERSEMENT:", f"{int(paid)} DA", font_med, y)
+                
+                reste = total - paid
+                label_reste = 'RESTE' if reste >= 0 else 'RENDU'
+                y += draw_lr(f"{label_reste}:", f"{int(abs(reste))} DA", font_med, y, True)
 
         y += 30
         y = draw_text_line("Merci de votre visite", y, font_reg, 'center')
@@ -639,7 +648,7 @@ class StockApp(MDApp):
 
     def get_image_raster_data(self, image):
         max_width = 576
-        if image.width > max_width:
+        if image.width != max_width:
             ratio = max_width / float(image.width)
             new_height = int(image.height * ratio)
             image = image.resize((max_width, new_height), Image.Resampling.LANCZOS)
@@ -653,8 +662,11 @@ class StockApp(MDApp):
         yH = height // 256
         
         cmd = b'\x1d\x76\x30\x00' + bytes([xL, xH, yL, yH])
-        raster_data = image.tobytes()
-        return cmd + raster_data
+        
+        raw_bytes = image.tobytes()
+        inverted_bytes = bytearray([b ^ 0xFF for b in raw_bytes])
+        
+        return cmd + inverted_bytes
 
     def build(self):
         Builder.load_string(KV_BUILDER)
