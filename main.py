@@ -660,10 +660,9 @@ class StockApp(MDApp):
     # -----------------------------------------------------------------------------------------
     def print_ticket_bluetooth(self, transaction_data):
         if platform != 'android':
-            print("[DEBUG] Printing not supported on this platform.")
             return
-
-        # 1. Config Check
+            
+        # التحقق من الإعدادات
         if not self.store.exists('printer_config'):
             self.notify('طابعة غير مهيئة', 'error')
             return
@@ -674,7 +673,7 @@ class StockApp(MDApp):
 
         socket = None
         try:
-            # 2. Bluetooth Connection
+            # الاتصال بالبلوتوث
             adapter = BluetoothAdapter.getDefaultAdapter()
             if not adapter or not adapter.isEnabled():
                 self.notify('Bluetooth OFF', 'error')
@@ -682,48 +681,46 @@ class StockApp(MDApp):
             
             try:
                 device = adapter.getRemoteDevice(target_mac)
-                uuid = UUID.fromString('00001101-0000-1000-8000-00805F9B34FB')
+                # UUID القياسي للطابعات
+                uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
                 socket = device.createRfcommSocketToServiceRecord(uuid)
                 socket.connect()
             except Exception as e:
                 self.notify('فشل الاتصال بالطابعة', 'error')
-                print(f"[PRINT ERROR] Connection failed: {e}")
                 return
 
             output_stream = socket.getOutputStream()
 
-            # 3. ESC/POS Commands
+            # --- أوامر الطابعة (ESC/POS) ---
             ESC = b'\x1b'
             GS = b'\x1d'
             INIT = ESC + b'@'
             CUT = GS + b'V\x00'
+            
+            # المحاذاة
             CENTER = ESC + b'a\x01'
             LEFT = ESC + b'a\x00'
             RIGHT = ESC + b'a\x02'
+            
+            # الخطوط
             BOLD_ON = ESC + b'E\x01'
             BOLD_OFF = ESC + b'E\x00'
-            BIG_FONT = GS + b'!\x11'
+            BIG_FONT = GS + b'!\x11' # تكبير الطول والعرض
             NORM_FONT = GS + b'!\x00'
             
-            # --- Encoding Setup ---
-            # Try to set codepage to CP1256 (Arabic) or CP864 (Arabic DOS)
-            # Many thermal printers use 22 for Arabic(1256) or 40 for 1256. 
-            # We will send a sequence to enable Arabic CP1256.
-            SET_CP1256 = ESC + b't' + b'\x16' # Table 22 often Arabic
-            
-            def enc(text):
-                # Using CP1256 which handles Arabic and French well
-                try:
-                    return text.encode('cp1256', errors='replace')
-                except:
-                    return text.encode('utf-8', errors='ignore')
+            # --- تفعيل اللغة العربية ---
+            # الأمر: ESC t n (اختيار Code Page)
+            # 22 هو الرقم الشائع لـ Arabic CP1256 في طابعات XPrinter وغيرها
+            SET_CP1256 = ESC + b't' + b'\x16' 
 
+            # دوال مساعدة للنصوص
             def proc_ar(text):
-                """ Reshapes and reverses Arabic text for thermal printing """
+                """ إعادة تشكيل النص العربي وعكسه """
                 if not text:
                     return ""
                 try:
                     text = str(text)
+                    # إذا كان يحتوي على عربية
                     if any('\u0600' <= char <= 'ۿ' for char in text):
                         reshaped_text = arabic_reshaper.reshape(text)
                         bidi_text = get_display(reshaped_text)
@@ -732,13 +729,21 @@ class StockApp(MDApp):
                 except:
                     return str(text)
 
-            # 4. Constructing the Receipt
+            def enc(text):
+                """ تحويل النص إلى بايت باستخدام CP1256 للطابعة """
+                try:
+                    # الترميز cp1256 هو المناسب للطابعات الحرارية العربية
+                    return text.encode('cp1256', errors='replace')
+                except:
+                    return text.encode('utf-8', errors='ignore')
+
+            # --- بناء الوصل ---
             buffer = b''
             buffer += INIT
-            buffer += SET_CP1256 
+            buffer += SET_CP1256 # تفعيل العربية
 
-            # -- Header --
-            store_name = 'MagPro Stock'
+            # 1. رأس الوصل (المتجر)
+            store_name = 'MagPro Store'
             store_address = ''
             store_phone = ''
             if self.store.exists('print_header'):
@@ -752,34 +757,41 @@ class StockApp(MDApp):
                 buffer += enc(proc_ar(store_address)) + b'\n'
             if store_phone:
                 buffer += enc(f'Tel: {store_phone}') + b'\n'
+            
+            # خط فاصل
             buffer += BOLD_OFF + enc('-' * 32) + b'\n' + LEFT
 
-            # -- Metadata --
-            # Handle timestamps (Server vs Local)
+            # 2. معلومات الفاتورة والوقت
+            # استخدام الوقت الحالي إذا لم يتوفر وقت السيرفر (خاصة في Offline)
             ts_str = transaction_data.get('timestamp', '')
             if not ts_str:
-                ts_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            date_str = ts_str[:16] # "YYYY-MM-DD HH:MM"
-
+                ts_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+            else:
+                # محاولة تقصير الوقت إذا كان طويلاً
+                try:
+                    ts_str = ts_str[:16]
+                except:
+                    pass
+            
             user_str = transaction_data.get('user_name', self.current_user_name)
             
-            # Determine Entity Name
+            # اسم الزبون
             entity_name_raw = "Passager"
             ent_id = transaction_data.get('entity_id')
-            if ent_id:
-                # Try finding locally
+            if self.selected_entity:
+                 entity_name_raw = self.selected_entity.get('name', 'Passager')
+            elif ent_id:
                 found = next((c for c in self.all_clients if c['id'] == ent_id), None)
                 if not found:
                     found = next((s for s in self.all_suppliers if s['id'] == ent_id), None)
                 if found:
                     entity_name_raw = found.get('name', 'Client')
                 else:
-                     # Check if name is embedded in transaction data (Server history sometimes has 'entity')
                      entity_name_raw = transaction_data.get('entity', 'Inconnu')
             
             client_display = proc_ar(entity_name_raw)
 
-            # Determine Document Type Label
+            # نوع الوثيقة
             doc_type = transaction_data.get('doc_type', 'BV')
             is_simple = transaction_data.get('is_simple_payment', False)
             doc_title = ""
@@ -788,7 +800,6 @@ class StockApp(MDApp):
                 pay_type = transaction_data.get('type', '')
                 amt = float(transaction_data.get('amount', 0))
                 custom_lbl = transaction_data.get('custom_label')
-                
                 if custom_lbl:
                     doc_title = custom_lbl
                 else:
@@ -797,10 +808,9 @@ class StockApp(MDApp):
                     else:
                         doc_title = "VERSEMENT" if pay_type == 'client_pay' else "REGLEMENT"
             else:
-                # Map codes to Names
                 labels = {
                     'BV': 'BON DE VENTE', 'BA': "BON D'ACHAT", 'FC': 'FACTURE', 
-                    'FF': 'FACTURE ACHAT', 'RC': 'RETOUR CLIENT', 'RF': 'RETOUR FOURN.',
+                    'FF': 'FACTURE ACHAT', 'RC': 'RETOUR', 'RF': 'RETOUR FOURN.',
                     'TR': 'TRANSFERT', 'FP': 'PROFORMA', 'DP': 'COMMANDE', 'BI': 'BON INITIAL'
                 }
                 doc_title = labels.get(doc_type, doc_type)
@@ -808,40 +818,33 @@ class StockApp(MDApp):
             buffer += CENTER + BOLD_ON + enc(proc_ar(doc_title)) + b'\n' + BOLD_OFF + LEFT
             buffer += enc('-' * 32) + b'\n'
             
-            # -- Info Lines --
-            # Server ID / Invoice Number Logic
-            server_id = transaction_data.get('server_id')
-            invoice_num = transaction_data.get('invoice_number') # From API fix
+            # طباعة الرقم والوقت
+            # رقم الوصل (يظهر فقط إذا توفر، في الاوفلاين قد لا يظهر أو يظهر كـ Pending)
+            ref_num = transaction_data.get('invoice_number') or transaction_data.get('server_id')
+            if ref_num:
+                 buffer += enc(f"Ref: {ref_num}\n")
             
-            # Use invoice_number if available, else server_id, else hide (offline)
-            display_ref = invoice_num if invoice_num else server_id
-            
-            if display_ref:
-                buffer += enc(f"Ref : {display_ref}\n")
-            
-            buffer += enc(f"Date: {date_str}\n")
+            buffer += enc(f"Date: {ts_str}\n")
             buffer += enc(f"User: {proc_ar(user_str)}\n")
             buffer += enc(f"Clnt: {client_display}\n")
             buffer += enc('-' * 32) + b'\n'
 
-            # 5. Content Printing
+            # 3. محتوى الفاتورة (المنتجات)
             if is_simple:
-                # Payment Receipt
+                # وصل دفع فقط
                 amount = abs(float(transaction_data.get('amount', 0)))
                 buffer += CENTER + BIG_FONT + BOLD_ON
                 buffer += enc(f"MONTANT: {int(amount)} DA\n")
                 buffer += NORM_FONT + BOLD_OFF + LEFT
             else:
-                # Items List
-                # Layout: 32 cols total. 
-                # Qty (4) | Name (Wrapped) | Price (Total) (9)
-                # We put Name on its own line if long, or squeeze it.
-                # Better Layout:
-                # Name (Line 1)
-                #   Qty x Price         Total (Line 2)
-                
+                # قائمة المنتجات
                 items = transaction_data.get('items', [])
                 total = 0
+                
+                # تنسيق الجدول
+                # السطر 1: اسم المنتج (عريض)
+                # السطر 2: الكمية × السعر = المجموع (مع العملة)
+                # السطر 3: خط متقطع
                 
                 for item in items:
                     raw_prod = item.get('name', 'Article')
@@ -853,34 +856,47 @@ class StockApp(MDApp):
                     total += row_total
                     
                     qty_str = str(int(qty)) if qty.is_integer() else str(qty)
-                    price_str = str(int(price))
-                    total_str = str(int(row_total))
+                    price_str = f"{int(price)}"
+                    total_str = f"{int(row_total)}"
                     
-                    # Print Name
+                    # السطر 1: الاسم
                     buffer += BOLD_ON + enc(prod_display) + b'\n' + BOLD_OFF
                     
-                    # Print Details line:  "5 x 100         500"
-                    details_left = f"{qty_str} x {price_str}"
-                    details_line = f"  {details_left:<18} {total_str:>10}"
-                    buffer += enc(details_line + '\n')
+                    # السطر 2: التفاصيل الحسابية
+                    # مثال:  5 x 100 DA   = 500 DA
+                    # التنسيق: محاولة توزيع المسافات
+                    line_calc = f"{qty_str} x {price_str} DA"
+                    line_total = f"= {total_str} DA"
+                    
+                    # حساب المسافات لعمل محاذاة (تقريبية لأن الخطوط غير ثابتة العرض تماماً في بعض الأوضاع)
+                    # الطابعة عادة 32 حرف (للكبير) أو 42/48 للصغير. نفترض 32 للعرض العادي
+                    space_needed = 32 - len(line_calc) - len(line_total)
+                    if space_needed < 1: space_needed = 1
+                    
+                    buffer += enc(line_calc + (" " * space_needed) + line_total + "\n")
+                    
+                    # السطر 3: فاصل متقطع
+                    buffer += enc(proc_ar("- - " * 8)) + b'\n'
 
-                buffer += enc('-' * 32) + b'\n'
-
-                if doc_type != 'TR': # No price for transfers usually
+                if doc_type != 'TR':
+                    buffer += b'\n'
+                    # المجموع الكلي
                     buffer += RIGHT + BIG_FONT + BOLD_ON
                     buffer += enc(f"TOTAL: {int(total)} DA\n")
                     buffer += NORM_FONT + BOLD_OFF + LEFT
                     
-                    # Payment info if available
+                    # المدفوع والباقي
                     payment = transaction_data.get('payment_info', {})
                     paid = float(payment.get('amount', 0))
                     if paid > 0:
+                         buffer += RIGHT
                          buffer += enc(f"Verse: {int(paid)} DA\n")
                          reste = total - paid
                          label_reste = "Reste" if reste >= 0 else "Rendu"
                          buffer += enc(f"{label_reste}: {int(abs(reste))} DA\n")
+                         buffer += LEFT
 
-            # 6. Footer
+            # 4. التذييل والقص
             buffer += CENTER + enc("\nMerci de votre visite\n\n")
             buffer += CUT
 
@@ -894,9 +910,7 @@ class StockApp(MDApp):
                     socket.close()
             except:
                 pass
-            print(f'[PRINT ERROR] Final Exception: {e}')
-            self.notify(f'Erreur impression: {e}', 'error')
-
+            print(f'Print Error: {e}')
 
     def build(self):
         Builder.load_string(KV_BUILDER)
@@ -2872,18 +2886,40 @@ class StockApp(MDApp):
         self.go_back()
 
     def save_offline_and_ui(self, data):
+        # حفظ البيانات في قاعدة البيانات المحلية (JSON)
         self.save_to_history(data, synced=False)
+        
+        # --- إضافة: طباعة الوصل في وضع الأوفلاين ---
+        try:
+            # التحقق من إعداد الطباعة التلقائية
+            if self.current_mode in ['sale', 'invoice_sale', 'return_sale']:
+                if self.store.exists('printer_config'):
+                    conf = self.store.get('printer_config')
+                    # الطباعة إذا كان الوضع "تلقائي" ومحدد طابعة
+                    if conf.get('auto', False) and conf.get('mac', ''):
+                        # نستخدم thread لكي لا يتجمد التطبيق
+                        threading.Thread(target=self.print_ticket_bluetooth, args=(data,), daemon=True).start()
+        except Exception as e:
+            print(f"Offline Print Error: {e}")
+        # -------------------------------------------
+
         try:
             doc_type = data.get('doc_type', 'BV')
+            # تحديث رصيد الزبون محلياً (Cache)
             if doc_type not in ['TR', 'FP', 'DP', 'BI'] and data.get('entity_id'):
                 total_amount = sum((float(i.get('price', 0)) * float(i.get('qty', 0)) for i in data.get('items', [])))
                 balance_sign = -1 if doc_type in ['RC', 'RF'] else 1
                 payment_info = data.get('payment_info', {})
                 paid_amount = float(payment_info.get('amount', 0))
-                net_change = total_amount * balance_sign - paid_amount
+                
+                # المعادلة: التغير في الرصيد = (قيمة الفاتورة) - (المدفوع)
+                # بيع (دين يزداد) - مدفوع (دين ينقص)
+                net_change = (total_amount * balance_sign) - paid_amount
                 self.update_local_entity_balance(data['entity_id'], net_change)
         except Exception as e:
             print(f'Error calculating offline balance update: {e}')
+            
+        # تنظيف الواجهة
         self.cart = []
         self.selected_entity = None
         self.selected_location = 'store'
@@ -3105,6 +3141,7 @@ class StockApp(MDApp):
         self.rv_history.refresh_from_data()
 
     def handle_pending_item(self, key, is_synced):
+        # التحقق من التاريخ في وضع البائع
         if self.is_seller_mode:
             try:
                 ts_val = int(key.split('_')[0])
@@ -3115,8 +3152,11 @@ class StockApp(MDApp):
                     return
             except:
                 pass
+
         if self.pending_dialog:
             self.pending_dialog.dismiss()
+
+        # عرض تفاصيل المعاملة المتزامنة (للعرض فقط)
         if is_synced and self.is_seller_mode:
             try:
                 data = self.offline_store.get(key)['order_data']
@@ -3125,23 +3165,36 @@ class StockApp(MDApp):
                 self.notify('Erreur lecture', 'error')
             return
 
+        # --- دالة الحذف ---
         def do_delete(x):
             if self.action_dialog:
                 self.action_dialog.dismiss()
+            
             if is_synced:
                 item_data = self.offline_store.get(key)
                 server_id = item_data.get('order_data', {}).get('server_id')
                 is_transfer = item_data.get('order_data', {}).get('doc_type') == 'TR'
+                
                 if server_id and self.is_server_reachable:
-                    UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/delete_transaction', req_body=json.dumps({'server_id': server_id, 'is_transfer': is_transfer}), req_headers={'Content-type': 'application/json'}, method='POST', on_success=lambda r, s: self.offline_store.delete(key) or self.notify('Supprimé du Serveur', 'success'), on_failure=lambda r, e: self.notify('Echec suppression serveur', 'error'))
+                    UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/delete_transaction',
+                               req_body=json.dumps({'server_id': server_id, 'is_transfer': is_transfer}),
+                               req_headers={'Content-type': 'application/json'},
+                               method='POST',
+                               on_success=lambda r, s: self.offline_store.delete(key) or self.notify('Supprimé du Serveur', 'success'),
+                               on_failure=lambda r, e: self.notify('Echec suppression serveur', 'error'))
                 else:
                     self.offline_store.delete(key)
                     self.notify('Supprimé (Local)', 'info')
             else:
                 self.offline_store.delete(key)
                 self.notify('Supprimé (Local)', 'info')
+            
             self._reset_notification_state(0)
+            # تحديث القائمة بعد الحذف
+            target_date = getattr(self, 'history_view_date', datetime.now().date())
+            self.filter_history_list(specific_date=target_date)
 
+        # --- دالة التعديل (تحميل للواجهة) ---
         def do_load(x):
             if self.action_dialog:
                 self.action_dialog.dismiss()
@@ -3150,33 +3203,47 @@ class StockApp(MDApp):
                 item_data = self.offline_store.get(key)
                 data = item_data['order_data']
                 self.current_editing_server_id = data.get('server_id')
+
+                # إذا كانت دفعة مالية بسيطة
                 if data.get('is_simple_payment'):
                     self.current_mode = data.get('type')
                     saved_ent_id = data.get('entity_id')
                     found_entity = next((c for c in self.all_clients if c['id'] == saved_ent_id), None)
                     if not found_entity:
                         found_entity = next((s for s in self.all_suppliers if s['id'] == saved_ent_id), None)
+                    
                     self.selected_entity = found_entity if found_entity else {'id': saved_ent_id, 'name': 'Client Inconnu'}
                     self.show_simple_payment_dialog(amount=data.get('amount'))
                     return
+
+                # إذا كانت فاتورة عادية
                 doc_type = data.get('doc_type', 'BV')
                 self.original_doc_type = doc_type
-                mode_map = {'BV': 'sale', 'BA': 'purchase', 'RC': 'return_sale', 'RF': 'return_purchase', 'TR': 'transfer', 'FC': 'invoice_sale', 'FP': 'proforma', 'FF': 'invoice_purchase', 'DP': 'order_purchase', 'BI': 'purchase'}
+                
+                mode_map = {
+                    'BV': 'sale', 'BA': 'purchase', 'RC': 'return_sale', 
+                    'RF': 'return_purchase', 'TR': 'transfer', 'FC': 'invoice_sale', 
+                    'FP': 'proforma', 'FF': 'invoice_purchase', 'DP': 'order_purchase', 'BI': 'purchase'
+                }
                 self.open_mode(mode_map.get(doc_type, 'sale'))
+                
                 self.cart = data.get('items', [])
                 self.selected_location = data.get('purchase_location', 'store')
+                
                 saved_ent_id = data.get('entity_id')
                 found_entity = None
                 if saved_ent_id:
                     found_entity = next((c for c in self.all_clients if c['id'] == saved_ent_id), None)
                     if not found_entity:
                         found_entity = next((s for s in self.all_suppliers if s['id'] == saved_ent_id), None)
+                    
                     if found_entity:
                         self.selected_entity = found_entity
                     else:
                         self.selected_entity = {'id': saved_ent_id, 'name': 'Client (Cache)'}
                 else:
                     self.selected_entity = {'id': None, 'name': 'COMPTOIR'}
+
                 if self.selected_entity and hasattr(self, 'btn_ent_screen'):
                     display_name = self.fix_text(str(self.selected_entity.get('name', 'Client')))[:15]
                     self.btn_ent_screen.text = display_name
@@ -3185,16 +3252,20 @@ class StockApp(MDApp):
                         self.btn_ent_screen.md_bg_color = (0, 0.6, 0.6, 1)
                     else:
                         self.btn_ent_screen.md_bg_color = (0.8, 0.4, 0, 1)
+
                 payment_info = data.get('payment_info', {})
                 try:
                     self.editing_payment_amount = float(payment_info.get('amount', 0))
                 except:
                     self.editing_payment_amount = 0
+
                 self.update_cart_button()
                 self.open_cart_screen(None)
+                
             except Exception as e:
                 self.notify(f'Erreur chargement: {e}', 'error')
-                
+        
+        # --- دالة الطباعة ---
         def do_print(x):
             try:
                 item_data = self.offline_store.get(key)
@@ -3204,17 +3275,45 @@ class StockApp(MDApp):
             except Exception as e:
                 self.notify(f'Erreur Impression: {e}', 'error')
 
+        # إعداد العنوان
         title_text = 'Action (Synchronisé)' if is_synced else 'Action (Non Synchronisé)'
         if is_synced:
             title_text += ' [Admin]'
-            
+
+        # --- تحسين الأزرار هنا ---
         buttons = [
-            MDFlatButton(text='SUPPRIMER', theme_text_color='Error', on_release=do_delete), 
-            MDRaisedButton(text='IMPRIMER', on_release=do_print),
-            MDRaisedButton(text='MODIFIER', on_release=do_load)
+            # زر الحذف: نص أحمر (مسطح) لتجنب الضغط الخاطئ
+            MDFlatButton(
+                text="SUPPRIMER", 
+                theme_text_color="Custom", 
+                text_color=(0.9, 0, 0, 1), # أحمر
+                font_style="Button",
+                on_release=do_delete
+            ),
+            # زر الطباعة: خلفية زرقاء (دائرية)
+            MDFillRoundFlatButton(
+                text="IMPRIMER",
+                md_bg_color=(0, 0.5, 0.8, 1), # أزرق
+                text_color=(1, 1, 1, 1),
+                font_style="Button",
+                on_release=do_print
+            ),
+            # زر التعديل: خلفية خضراء (دائرية) - الإجراء الرئيسي
+            MDFillRoundFlatButton(
+                text="MODIFIER", 
+                md_bg_color=(0, 0.7, 0, 1), # أخضر
+                text_color=(1, 1, 1, 1),
+                font_style="Button",
+                on_release=do_load
+            )
         ]
         
-        self.action_dialog = MDDialog(title=title_text, text='Que voulez-vous faire ?', buttons=buttons)
+        self.action_dialog = MDDialog(
+            title=title_text, 
+            text="Que voulez-vous faire avec cette opération ?",
+            buttons=buttons,
+            radius=[20, 7, 20, 7], # زوايا ناعمة للنافذة
+        )
         self.action_dialog.open()
 
     def view_synced_transaction(self, data):
