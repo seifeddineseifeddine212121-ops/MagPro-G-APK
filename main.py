@@ -1,7 +1,6 @@
 from bidi.algorithm import get_display
 from datetime import datetime, timedelta
-from kivy.clock import Clock
-from kivy.clock import mainthread
+from kivy.clock import Clock, mainthread
 from kivy.config import Config
 from kivy.core.text import LabelBase
 from kivy.core.window import Window
@@ -41,6 +40,7 @@ import socket
 import sys
 import threading
 import time
+import textwrap # Import textwrap for better receipt printing
 
 if platform == 'android':
     from jnius import autoclass
@@ -50,6 +50,7 @@ if platform == 'android':
 
 app_dir = os.path.dirname(os.path.abspath(__file__))
 
+# --- Font Loading Setup ---
 FONT_FILE = os.path.join(app_dir, 'font.ttf')
 custom_font_loaded = False
 try:
@@ -76,8 +77,296 @@ reshaper = arabic_reshaper.ArabicReshaper(configuration={'delete_harakat': True,
 
 DEFAULT_PORT = '5000'
 
-class SmartTextField(MDTextField):
+KV_BUILDER = """
+<LeftButtonsContainer>:
+    adaptive_width: True
+    spacing: "4dp"
+    padding: "4dp"
+    pos_hint: {"center_y": .5}
 
+<RightButtonsContainer>:
+    adaptive_width: True
+    spacing: "8dp"
+    pos_hint: {"center_y": .5}
+
+<ProductRecycleItem>:
+    orientation: 'vertical'
+    size_hint_y: None
+    height: dp(90)
+    padding: 0
+    spacing: 0
+    
+    MDCard:
+        orientation: 'horizontal'
+        padding: dp(10)
+        spacing: dp(10)
+        radius: [8]
+        elevation: 1
+        ripple_behavior: True
+        on_release: root.on_tap()
+        md_bg_color: (1, 1, 1, 1)
+        
+        MDIcon:
+            icon: root.icon_name
+            theme_text_color: "Custom"
+            text_color: root.icon_color
+            size_hint_x: None
+            width: dp(40)
+            pos_hint: {'center_y': .5}
+            font_size: '32sp'
+
+        MDBoxLayout:
+            orientation: 'vertical'
+            pos_hint: {'center_y': .5}
+            spacing: dp(5)
+            
+            MDLabel:
+                text: root.text_name
+                font_style: "Subtitle1"
+                bold: True
+                shorten: True
+                shorten_from: 'right'
+                font_size: '17sp'
+                theme_text_color: "Custom"
+                text_color: (0.1, 0.1, 0.1, 1)
+                font_name: 'ArabicFont'
+            
+            MDBoxLayout:
+                orientation: 'horizontal'
+                spacing: dp(10)
+                
+                MDLabel:
+                    text: root.text_price
+                    font_style: "H6"
+                    theme_text_color: "Custom"
+                    text_color: root.price_color
+                    bold: True
+                    size_hint_x: 0.6
+                    font_size: '20sp'
+                    font_name: 'ArabicFont'
+                
+                MDLabel:
+                    text: root.text_stock
+                    theme_text_color: "Custom"
+                    text_color: (0.1, 0.1, 0.1, 1)
+                    halign: 'right'
+                    size_hint_x: 0.4
+                    bold: True
+                    font_size: '16sp'
+                    font_name: 'ArabicFont'
+
+<ProductRecycleView>:
+    viewclass: 'ProductRecycleItem'
+    RecycleBoxLayout:
+        default_size: None, dp(95)
+        default_size_hint: 1, None
+        size_hint_y: None
+        height: self.minimum_height
+        orientation: 'vertical'
+        spacing: dp(4)
+        padding: dp(5)
+
+<HistoryRecycleItem>:
+    orientation: "horizontal"
+    size_hint_y: None
+    height: dp(80)
+    padding: dp(10)
+    spacing: dp(5)
+    radius: [10]
+    elevation: 1
+    ripple_behavior: True
+    md_bg_color: root.bg_color
+    on_release: root.on_tap()
+
+    MDIcon:
+        icon: root.icon_name
+        theme_text_color: "Custom"
+        text_color: root.icon_color
+        pos_hint: {"center_y": .5}
+        font_size: "32sp"
+        size_hint_x: None
+        width: dp(40)
+
+    MDBoxLayout:
+        orientation: "vertical"
+        pos_hint: {"center_y": .5}
+        spacing: dp(4)
+        size_hint_x: 0.5
+
+        MDLabel:
+            text: root.text_primary
+            bold: True
+            font_style: "Subtitle1"
+            font_size: "16sp"
+            theme_text_color: "Primary"
+            shorten: True
+            shorten_from: 'right'
+            font_name: 'ArabicFont'
+            markup: True
+
+        MDLabel:
+            text: root.text_secondary
+            font_style: "Caption"
+            theme_text_color: "Secondary"
+            font_name: 'ArabicFont'
+
+    MDLabel:
+        text: root.text_amount
+        halign: "right"
+        pos_hint: {"center_y": .5}
+        font_style: "Subtitle2"
+        bold: True
+        theme_text_color: "Custom"
+        text_color: root.icon_color
+        size_hint_x: 0.3
+        font_name: 'ArabicFont'
+
+<HistoryRecycleView>:
+    viewclass: 'HistoryRecycleItem'
+    RecycleBoxLayout:
+        default_size: None, dp(85)
+        default_size_hint: 1, None
+        size_hint_y: None
+        height: self.minimum_height
+        orientation: 'vertical'
+        spacing: dp(5)
+        padding: dp(5)
+
+<EntityRecycleItem>:
+    orientation: "horizontal"
+    size_hint_y: None
+    height: dp(80)
+    padding: dp(10)
+    spacing: dp(15)
+    ripple_behavior: True
+    md_bg_color: (1, 1, 1, 1)
+    radius: [0]
+    on_release: root.on_tap()
+
+    MDIcon:
+        icon: root.icon_name
+        theme_text_color: "Custom"
+        text_color: root.icon_color
+        pos_hint: {"center_y": .5}
+        font_size: "32sp"
+        size_hint_x: None
+        width: dp(40)
+
+    MDBoxLayout:
+        orientation: "vertical"
+        pos_hint: {"center_y": .5}
+        size_hint_x: 1
+        spacing: dp(4)
+
+        MDLabel:
+            text: root.text_name
+            bold: True
+            font_style: "Subtitle1"
+            font_name: 'ArabicFont'
+            theme_text_color: "Custom"
+            text_color: (0.1, 0.1, 0.1, 1)
+            shorten: True
+            shorten_from: 'right'
+            valign: 'center'
+
+        MDLabel:
+            text: root.text_balance
+            font_style: "Caption"
+            font_name: 'ArabicFont'
+            markup: True
+            theme_text_color: "Secondary"
+            valign: 'top'
+
+<EntityRecycleView>:
+    viewclass: 'EntityRecycleItem'
+    RecycleBoxLayout:
+        default_size: None, dp(80)
+        default_size_hint: 1, None
+        size_hint_y: None
+        height: self.minimum_height
+        orientation: 'vertical'
+        spacing: dp(2)
+        padding: dp(0)
+
+<MgmtEntityRecycleItem>:
+    orientation: "horizontal"
+    size_hint_y: None
+    height: dp(80)
+    padding: dp(10)
+    spacing: dp(5)
+    ripple_behavior: True
+    md_bg_color: (1, 1, 1, 1)
+    on_release: root.on_edit()
+
+    MDIcon:
+        icon: "account-circle"
+        theme_text_color: "Custom"
+        text_color: (0.5, 0.5, 0.5, 1)
+        pos_hint: {"center_y": .5}
+        font_size: "32sp"
+        size_hint_x: None
+        width: dp(40)
+
+    MDIconButton:
+        icon: "pencil"
+        theme_text_color: "Custom"
+        text_color: (0, 0.5, 0.8, 1)
+        pos_hint: {"center_y": .5}
+        on_release: root.on_menu()
+
+    MDBoxLayout:
+        orientation: "vertical"
+        pos_hint: {"center_y": .5}
+        size_hint_x: 1
+        spacing: dp(2)
+        padding: [dp(10), 0, 0, 0]
+
+        MDLabel:
+            text: root.text_name
+            bold: True
+            font_style: "Subtitle1"
+            font_name: 'ArabicFont'
+            theme_text_color: "Custom"
+            text_color: (0.1, 0.1, 0.1, 1)
+            shorten: True
+            shorten_from: 'right'
+            halign: "left"
+
+        MDLabel:
+            text: root.text_balance
+            font_style: "Caption"
+            font_name: 'ArabicFont'
+            markup: True
+            theme_text_color: "Secondary"
+            halign: "left"
+
+    MDIconButton:
+        icon: "clock-time-eight-outline"
+        theme_text_color: "Custom"
+        text_color: (0, 0.5, 0.5, 1)
+        pos_hint: {"center_y": .5}
+        on_release: root.on_history()
+
+<MgmtEntityRecycleView>:
+    viewclass: 'MgmtEntityRecycleItem'
+    RecycleBoxLayout:
+        default_size: None, dp(80)
+        default_size_hint: 1, None
+        size_hint_y: None
+        height: self.minimum_height
+        orientation: 'vertical'
+        spacing: dp(2)
+        padding: dp(0)
+"""
+
+class DataValidator:
+    @staticmethod
+    def validate_ip(ip_address):
+        if not ip_address or not isinstance(ip_address, str):
+            return False
+        return len(ip_address) > 3
+
+class SmartTextField(MDTextField):
     def __init__(self, **kwargs):
         self._raw_text = ''
         self.base_direction = 'ltr'
@@ -121,57 +410,11 @@ class SmartTextField(MDTextField):
             return self.text
         return self._raw_text
 
-    def on_text(self, instance, value):
-        if not hasattr(self, '_raw_text'):
-            return
-        try:
-            expected_display = get_display(self._input_reshaper.reshape(self._raw_text))
-            if value == expected_display:
-                self._update_alignment(self._raw_text)
-                return
-            self._raw_text = value
-            reshaped = self._input_reshaper.reshape(self._raw_text)
-            new_display = get_display(reshaped)
-            if new_display != value:
-                self.text = new_display
-            else:
-                self._update_alignment(self._raw_text)
-        except Exception as e:
-            pass
-
-KV_BUILDER = '\n<LeftButtonsContainer>:\n    adaptive_width: True\n    spacing: "4dp"\n    padding: "4dp"\n    pos_hint: {"center_y": .5}\n\n<RightButtonsContainer>:\n    adaptive_width: True\n    spacing: "8dp"\n    pos_hint: {"center_y": .5}\n\n<CustomHistoryItem>:\n    orientation: "horizontal"\n    size_hint_y: None\n    height: dp(80)\n    padding: dp(10)\n    spacing: dp(5)\n    radius: [10]\n    elevation: 1\n    ripple_behavior: True\n    md_bg_color: root.bg_color\n    on_release: root.on_tap_action()\n    \n    MDIcon:\n        icon: root.icon\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        pos_hint: {"center_y": .5}\n        font_size: "32sp"\n        size_hint_x: None\n        width: dp(40)\n        \n    MDBoxLayout:\n        orientation: "vertical"\n        pos_hint: {"center_y": .5}\n        spacing: dp(4)\n        size_hint_x: 0.5\n        \n        MDLabel:\n            text: root.text\n            bold: True\n            font_style: "Subtitle1"\n            font_size: "16sp"\n            theme_text_color: "Primary"\n            shorten: True\n            shorten_from: \'right\'\n            font_name: \'ArabicFont\'\n            markup: True\n            \n        MDLabel:\n            text: root.secondary_text\n            font_style: "Caption"\n            theme_text_color: "Secondary"\n            font_name: \'ArabicFont\'\n            \n    MDLabel:\n        text: root.right_text\n        halign: "right"\n        pos_hint: {"center_y": .5}\n        font_style: "Subtitle2"\n        bold: True\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        size_hint_x: 0.3\n        font_name: \'ArabicFont\'\n\n    MDIconButton:\n        icon: "pencil"\n        theme_text_color: "Custom"\n        text_color: (0, 0.5, 0.8, 1)\n        pos_hint: {"center_y": .5}\n        on_release: root.on_edit_action()\n\n<ProductRecycleItem>:\n    orientation: \'vertical\'\n    size_hint_y: None\n    height: dp(90)\n    padding: 0\n    spacing: 0\n    \n    MDCard:\n        orientation: \'horizontal\'\n        padding: dp(10)\n        spacing: dp(10)\n        radius: [8]\n        elevation: 1\n        ripple_behavior: True\n        on_release: root.on_tap()\n        md_bg_color: (1, 1, 1, 1)\n        \n        MDIcon:\n            icon: root.icon_name\n            theme_text_color: "Custom"\n            text_color: root.icon_color\n            size_hint_x: None\n            width: dp(40)\n            pos_hint: {\'center_y\': .5}\n            font_size: \'32sp\'\n\n        MDBoxLayout:\n            orientation: \'vertical\'\n            pos_hint: {\'center_y\': .5}\n            spacing: dp(5)\n            \n            MDLabel:\n                text: root.text_name\n                font_style: "Subtitle1"\n                bold: True\n                shorten: True\n                shorten_from: \'right\'\n                font_size: \'17sp\'\n                theme_text_color: "Custom"\n                text_color: (0.1, 0.1, 0.1, 1)\n                font_name: \'ArabicFont\'\n            \n            MDBoxLayout:\n                orientation: \'horizontal\'\n                spacing: dp(10)\n                \n                MDLabel:\n                    text: root.text_price\n                    font_style: "H6"\n                    theme_text_color: "Custom"\n                    text_color: root.price_color\n                    bold: True\n                    size_hint_x: 0.6\n                    font_size: \'20sp\'\n                    font_name: \'ArabicFont\'\n                \n                MDLabel:\n                    text: root.text_stock\n                    theme_text_color: "Custom"\n                    text_color: (0.1, 0.1, 0.1, 1)\n                    halign: \'right\'\n                    size_hint_x: 0.4\n                    bold: True\n                    font_size: \'16sp\'\n                    font_name: \'ArabicFont\'\n\n<ProductRecycleView>:\n    viewclass: \'ProductRecycleItem\'\n    RecycleBoxLayout:\n        default_size: None, dp(95)\n        default_size_hint: 1, None\n        size_hint_y: None\n        height: self.minimum_height\n        orientation: \'vertical\'\n        spacing: dp(4)\n        padding: dp(5)\n'
-
 class LeftButtonsContainer(ILeftBody, MDBoxLayout):
     adaptive_width = True
 
 class RightButtonsContainer(IRightBodyTouch, MDBoxLayout):
     adaptive_width = True
-
-class DataValidator:
-
-    @staticmethod
-    def validate_ip(ip_address):
-        if not ip_address or not isinstance(ip_address, str):
-            return False
-        return len(ip_address) > 3
-
-class CustomHistoryItem(MDCard):
-    text = StringProperty('')
-    secondary_text = StringProperty('')
-    right_text = StringProperty('')
-    icon = StringProperty('file')
-    icon_color = ColorProperty([0, 0, 0, 1])
-    bg_color = ColorProperty([1, 1, 1, 1])
-    tap_callback = ObjectProperty(None)
-    edit_callback = ObjectProperty(None)
-
-    def on_tap_action(self):
-        if self.tap_callback:
-            self.tap_callback()
-
-    def on_edit_action(self):
-        if self.edit_callback:
-            self.edit_callback()
 
 class ProductRecycleItem(RecycleDataViewBehavior, MDBoxLayout):
     index = None
@@ -185,7 +428,9 @@ class ProductRecycleItem(RecycleDataViewBehavior, MDBoxLayout):
 
     def refresh_view_attrs(self, rv, index, data):
         self.index = index
-        self.text_name = data.get('name', '')
+        app = MDApp.get_running_app()
+        raw_name = data.get('name', '')
+        self.text_name = app.fix_text(raw_name) if app else raw_name
         self.text_price = data.get('price_text', '')
         self.text_stock = data.get('stock_text', '')
         self.icon_name = data.get('icon', 'package-variant')
@@ -199,8 +444,107 @@ class ProductRecycleItem(RecycleDataViewBehavior, MDBoxLayout):
         if self.product_data:
             app.open_add_to_cart_dialog(self.product_data, app.current_mode)
 
-class ProductRecycleView(RecycleView):
+class HistoryRecycleItem(RecycleDataViewBehavior, MDCard):
+    index = None
+    text_primary = StringProperty('')
+    text_secondary = StringProperty('')
+    text_amount = StringProperty('')
+    icon_name = StringProperty('file')
+    icon_color = ColorProperty([0, 0, 0, 1])
+    bg_color = ColorProperty([1, 1, 1, 1])
+    item_data = ObjectProperty(None, allownone=True)
+    is_local = BooleanProperty(False)
+    key = StringProperty('')
 
+    def refresh_view_attrs(self, rv, index, data):
+        self.index = index
+        app = MDApp.get_running_app()
+        self.text_primary = app.fix_text(data.get('raw_text', ''))
+        self.text_secondary = app.fix_text(data.get('raw_sec', ''))
+        self.text_amount = data.get('amount_text', '')
+        self.icon_name = data.get('icon', 'file')
+        self.icon_color = data.get('icon_color', [0, 0, 0, 1])
+        self.bg_color = data.get('bg_color', [1, 1, 1, 1])
+        self.item_data = data.get('raw_data')
+        self.is_local = data.get('is_local', False)
+        self.key = data.get('key', '')
+        return super().refresh_view_attrs(rv, index, data)
+
+    def on_tap(self):
+        app = MDApp.get_running_app()
+        if self.is_local:
+            app.handle_pending_item(self.key, False)
+        elif self.item_data:
+            app.handle_server_history_item(self.item_data)
+
+class MgmtEntityRecycleItem(RecycleDataViewBehavior, MDCard):
+    index = None
+    text_name = StringProperty('')
+    text_balance = StringProperty('')
+    entity_data = ObjectProperty(None, allownone=True)
+
+    def refresh_view_attrs(self, rv, index, data):
+        self.index = index
+        app = MDApp.get_running_app()
+        raw_name = data.get('raw_name', '')
+        self.text_name = app.fix_text(raw_name) if app else raw_name
+        self.text_balance = data.get('balance_text', '')
+        self.entity_data = data.get('raw_data')
+        return super().refresh_view_attrs(rv, index, data)
+
+    def on_edit(self):
+        self.on_menu()
+
+    def on_menu(self):
+        app = MDApp.get_running_app()
+        if self.entity_data:
+            app.open_entity_edit_menu(self.entity_data)
+
+    def on_history(self):
+        app = MDApp.get_running_app()
+        if self.entity_data:
+            app.open_entity_history_dialog(self.entity_data)
+
+class EntityRecycleItem(RecycleDataViewBehavior, MDCard):
+    index = None
+    text_name = StringProperty('')
+    text_balance = StringProperty('')
+    icon_name = StringProperty('account')
+    icon_color = ListProperty([0, 0, 0, 1])
+    entity_data = ObjectProperty(None, allownone=True)
+
+    def refresh_view_attrs(self, rv, index, data):
+        self.index = index
+        app = MDApp.get_running_app()
+        raw_name = data.get('raw_name', '')
+        self.text_name = app.fix_text(raw_name) if app else raw_name
+        self.text_balance = data.get('balance_text', '')
+        self.icon_name = data.get('icon', 'account')
+        self.icon_color = data.get('icon_color', [0, 0, 0, 1])
+        self.entity_data = data.get('raw_data')
+        return super().refresh_view_attrs(rv, index, data)
+
+    def on_tap(self):
+        app = MDApp.get_running_app()
+        if self.entity_data:
+            app.select_entity_from_rv(self.entity_data)
+
+class HistoryRecycleView(RecycleView):
+    def __init__(self, **kwargs):
+        super(HistoryRecycleView, self).__init__(**kwargs)
+        self.data = []
+
+class MgmtEntityRecycleView(RecycleView):
+    def __init__(self, **kwargs):
+        super(MgmtEntityRecycleView, self).__init__(**kwargs)
+        self.data = []
+
+class EntityRecycleView(RecycleView):
+    def __init__(self, **kwargs):
+        super(EntityRecycleView, self).__init__(**kwargs)
+        self.data = []
+
+class ProductRecycleView(RecycleView):
     def __init__(self, **kwargs):
         super(ProductRecycleView, self).__init__(**kwargs)
         self.data = []
@@ -311,11 +655,15 @@ class StockApp(MDApp):
         self.temp_selected_mac = ''
         self.notify('Imprimante effacée', 'info')
 
+    # -----------------------------------------------------------------------------------------
+    # PRINTING LOGIC (Universal: Online/Offline, All Doc Types, Improved Layout & Arabic)
+    # -----------------------------------------------------------------------------------------
     def print_ticket_bluetooth(self, transaction_data):
         if platform != 'android':
+            print("[DEBUG] Printing not supported on this platform.")
             return
-        
-        # 1. جلب إعدادات الطابعة
+
+        # 1. Config Check
         if not self.store.exists('printer_config'):
             self.notify('طابعة غير مهيئة', 'error')
             return
@@ -326,29 +674,29 @@ class StockApp(MDApp):
 
         socket = None
         try:
+            # 2. Bluetooth Connection
             adapter = BluetoothAdapter.getDefaultAdapter()
             if not adapter or not adapter.isEnabled():
                 self.notify('Bluetooth OFF', 'error')
                 return
             
-            # 2. الاتصال بالطابعة
             try:
                 device = adapter.getRemoteDevice(target_mac)
-                # UUID القياسي للطابعات التسلسلية
-                uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+                uuid = UUID.fromString('00001101-0000-1000-8000-00805F9B34FB')
                 socket = device.createRfcommSocketToServiceRecord(uuid)
                 socket.connect()
             except Exception as e:
                 self.notify('فشل الاتصال بالطابعة', 'error')
+                print(f"[PRINT ERROR] Connection failed: {e}")
                 return
 
             output_stream = socket.getOutputStream()
 
-            # 3. أوامر ESC/POS
+            # 3. ESC/POS Commands
             ESC = b'\x1b'
             GS = b'\x1d'
             INIT = ESC + b'@'
-            CUT = GS + b'V\x00' # قص الورق
+            CUT = GS + b'V\x00'
             CENTER = ESC + b'a\x01'
             LEFT = ESC + b'a\x00'
             RIGHT = ESC + b'a\x02'
@@ -357,42 +705,42 @@ class StockApp(MDApp):
             BIG_FONT = GS + b'!\x11'
             NORM_FONT = GS + b'!\x00'
             
-            # أمر تفعيل اللغة العربية (Codepage 1256)
-            # يختلف من طابعة لأخرى، لكن هذا الأمر شائع (ESC t 32 أو ESC t 40)
-            # بعض الطابعات تحتاج إلى CP864، لكن CP1256 هو الأكثر شيوعاً للنصوص الحديثة
-            SET_CP1256 = ESC + b't\x20' 
-
-            # --- دوال معالجة النصوص العربية ---
-            def proc_ar(text):
-                if not text: return ""
-                try:
-                    text = str(text)
-                    # 1. إعادة تشكيل الحروف (ربط الحروف)
-                    reshaped_text = arabic_reshaper.reshape(text)
-                    # 2. قلب النص (من اليمين لليسار)
-                    bidi_text = get_display(reshaped_text)
-                    return bidi_text
-                except:
-                    return str(text)
-
+            # --- Encoding Setup ---
+            # Try to set codepage to CP1256 (Arabic) or CP864 (Arabic DOS)
+            # Many thermal printers use 22 for Arabic(1256) or 40 for 1256. 
+            # We will send a sequence to enable Arabic CP1256.
+            SET_CP1256 = ESC + b't' + b'\x16' # Table 22 often Arabic
+            
             def enc(text):
-                # التشفير بـ cp1256 للطابعات الحرارية
+                # Using CP1256 which handles Arabic and French well
                 try:
                     return text.encode('cp1256', errors='replace')
                 except:
                     return text.encode('utf-8', errors='ignore')
-            # ----------------------------------
 
+            def proc_ar(text):
+                """ Reshapes and reverses Arabic text for thermal printing """
+                if not text:
+                    return ""
+                try:
+                    text = str(text)
+                    if any('\u0600' <= char <= 'ۿ' for char in text):
+                        reshaped_text = arabic_reshaper.reshape(text)
+                        bidi_text = get_display(reshaped_text)
+                        return bidi_text
+                    return text
+                except:
+                    return str(text)
+
+            # 4. Constructing the Receipt
             buffer = b''
             buffer += INIT
-            buffer += SET_CP1256 # تفعيل الكود بيج العربي
-            
-            # 4. طباعة رأس التذكرة (معلومات المتجر)
-            store_name = "MagPro Stock"
-            store_address = ""
-            store_phone = ""
-            
-            # جلب المعلومات المحفوظة من API
+            buffer += SET_CP1256 
+
+            # -- Header --
+            store_name = 'MagPro Stock'
+            store_address = ''
+            store_phone = ''
             if self.store.exists('print_header'):
                 header_conf = self.store.get('print_header')
                 store_name = header_conf.get('name', store_name)
@@ -403,148 +751,152 @@ class StockApp(MDApp):
             if store_address:
                 buffer += enc(proc_ar(store_address)) + b'\n'
             if store_phone:
-                buffer += enc(f"Tel: {store_phone}") + b'\n'
-            
-            buffer += BOLD_OFF + enc("-" * 32) + b'\n' + LEFT
+                buffer += enc(f'Tel: {store_phone}') + b'\n'
+            buffer += BOLD_OFF + enc('-' * 32) + b'\n' + LEFT
 
-            # 5. معلومات الوصل
-            date_str = transaction_data.get('timestamp', '')[:16]
+            # -- Metadata --
+            # Handle timestamps (Server vs Local)
+            ts_str = transaction_data.get('timestamp', '')
+            if not ts_str:
+                ts_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            date_str = ts_str[:16] # "YYYY-MM-DD HH:MM"
+
             user_str = transaction_data.get('user_name', self.current_user_name)
             
-            # -- منطق اسم الزبون --
+            # Determine Entity Name
             entity_name_raw = "Passager"
-            if self.selected_entity:
-                entity_name_raw = self.selected_entity.get('name', 'Passager')
-            elif transaction_data.get('entity_id'):
-                # محاولة البحث في الكاش
-                e_id = transaction_data.get('entity_id')
-                found = next((c for c in self.all_clients if c['id'] == e_id), None)
+            ent_id = transaction_data.get('entity_id')
+            if ent_id:
+                # Try finding locally
+                found = next((c for c in self.all_clients if c['id'] == ent_id), None)
                 if not found:
-                    found = next((s for s in self.all_suppliers if s['id'] == e_id), None)
+                    found = next((s for s in self.all_suppliers if s['id'] == ent_id), None)
                 if found:
                     entity_name_raw = found.get('name', 'Client')
+                else:
+                     # Check if name is embedded in transaction data (Server history sometimes has 'entity')
+                     entity_name_raw = transaction_data.get('entity', 'Inconnu')
+            
             client_display = proc_ar(entity_name_raw)
 
-            # -- تحديد نوع الوصل --
-            if transaction_data.get('is_simple_payment', False):
-                # ... (منطق وصل الدفع البسيط - نفس السابق مع استخدام proc_ar و enc) ...
-                amount = float(transaction_data.get('amount', 0))
-                pay_type = transaction_data.get('type', '')
-                title = "BON DE VERSEMENT"
-                if amount < 0:
-                    title = "BON DE CREDIT" if pay_type == 'client_pay' else "DETTE FOURNISSEUR"
-                elif pay_type == 'supplier_pay':
-                    title = "REGLEMENT FOURNISSEUR"
-                
-                buffer += CENTER + BOLD_ON + enc(proc_ar(title)) + b'\n' + BOLD_OFF + LEFT
-                buffer += enc("-" * 32) + b'\n'
-                
-                # --- المنطق المطلوب: رقم الوصل ---
-                # في حالة الدفع، عادة لا يوجد رقم وصل، لكن إذا أردت إضافته:
-                server_id = transaction_data.get('server_id')
-                if server_id: # إذا كان موجوداً (أونلاين)
-                     buffer += enc(f"Bon N : {server_id}\n")
-                # إذا لم يكن موجوداً (أوفلاين) لا نطبع السطر
-                
-                buffer += enc(f"Date : {date_str}\n")
-                buffer += enc(f"User : {user_str}\n")
-                buffer += enc(f"Client : {client_display}\n")
-                buffer += enc("-" * 32) + b'\n'
-                
-                buffer += CENTER + BIG_FONT + BOLD_ON
-                buffer += enc(f"MONTANT: {int(abs(amount))} DA\n")
-                buffer += NORM_FONT + BOLD_OFF + LEFT
-                
-            else:
-                # --- وصل البيع/الشراء العادي ---
-                doc_type = transaction_data.get('doc_type', 'BV')
-                doc_titles = {'BV': 'BON DE VENTE', 'FC': 'FACTURE', 'BA': 'BON DE RECEPTION', 'RC': 'RETOUR', 'TR': 'TRANSFERT'}
-                doc_title = doc_titles.get(doc_type, doc_type)
-                
-                buffer += CENTER + BOLD_ON + enc(proc_ar(doc_title)) + b'\n' + BOLD_OFF + LEFT
-                buffer += enc("-" * 32) + b'\n'
-                
-                buffer += enc(f"Date : {date_str}\n")
-                
-                # ========================================================
-                # التعديل المطلوب: إظهار الرقم فقط إذا كان أونلاين (يحتوي على server_id)
-                # ========================================================
-                server_id = transaction_data.get('server_id')
-                if server_id:
-                    # في الأونلاين نطبع الرقم القادم من السيرفر
-                    buffer += enc(f"Bon N : {transaction_data.get('description', server_id)}\n")
-                else:
-                    # في الأوفلاين (لا يوجد server_id) نتجاهل السطر تماماً
-                    pass 
-                # ========================================================
+            # Determine Document Type Label
+            doc_type = transaction_data.get('doc_type', 'BV')
+            is_simple = transaction_data.get('is_simple_payment', False)
+            doc_title = ""
 
-                buffer += enc(f"User : {user_str}\n")
-                buffer += enc(f"Client : {client_display}\n")
-                buffer += enc("-" * 32) + b'\n'
+            if is_simple:
+                pay_type = transaction_data.get('type', '')
+                amt = float(transaction_data.get('amount', 0))
+                custom_lbl = transaction_data.get('custom_label')
                 
-                # طباعة المنتجات
-                # تنسيق الأعمدة (اسم - كمية - سعر)
-                # ملاحظة: العرض الافتراضي للطابعة 80مم هو حوالي 42-48 حرف
-                # سنخصص: الاسم (20)، الكمية (6)، السعر (12)
+                if custom_lbl:
+                    doc_title = custom_lbl
+                else:
+                    if amt < 0:
+                        doc_title = "BON DE CREDIT" if pay_type == 'client_pay' else "DETTE"
+                    else:
+                        doc_title = "VERSEMENT" if pay_type == 'client_pay' else "REGLEMENT"
+            else:
+                # Map codes to Names
+                labels = {
+                    'BV': 'BON DE VENTE', 'BA': "BON D'ACHAT", 'FC': 'FACTURE', 
+                    'FF': 'FACTURE ACHAT', 'RC': 'RETOUR CLIENT', 'RF': 'RETOUR FOURN.',
+                    'TR': 'TRANSFERT', 'FP': 'PROFORMA', 'DP': 'COMMANDE', 'BI': 'BON INITIAL'
+                }
+                doc_title = labels.get(doc_type, doc_type)
+
+            buffer += CENTER + BOLD_ON + enc(proc_ar(doc_title)) + b'\n' + BOLD_OFF + LEFT
+            buffer += enc('-' * 32) + b'\n'
+            
+            # -- Info Lines --
+            # Server ID / Invoice Number Logic
+            server_id = transaction_data.get('server_id')
+            invoice_num = transaction_data.get('invoice_number') # From API fix
+            
+            # Use invoice_number if available, else server_id, else hide (offline)
+            display_ref = invoice_num if invoice_num else server_id
+            
+            if display_ref:
+                buffer += enc(f"Ref : {display_ref}\n")
+            
+            buffer += enc(f"Date: {date_str}\n")
+            buffer += enc(f"User: {proc_ar(user_str)}\n")
+            buffer += enc(f"Clnt: {client_display}\n")
+            buffer += enc('-' * 32) + b'\n'
+
+            # 5. Content Printing
+            if is_simple:
+                # Payment Receipt
+                amount = abs(float(transaction_data.get('amount', 0)))
+                buffer += CENTER + BIG_FONT + BOLD_ON
+                buffer += enc(f"MONTANT: {int(amount)} DA\n")
+                buffer += NORM_FONT + BOLD_OFF + LEFT
+            else:
+                # Items List
+                # Layout: 32 cols total. 
+                # Qty (4) | Name (Wrapped) | Price (Total) (9)
+                # We put Name on its own line if long, or squeeze it.
+                # Better Layout:
+                # Name (Line 1)
+                #   Qty x Price         Total (Line 2)
                 
-                header_line = f"{'Article':<18} {'Qte':<5} {'Prix':<9}"
-                buffer += enc(header_line + "\n")
-                buffer += enc("-" * 32) + b'\n'
-                
-                total = 0
                 items = transaction_data.get('items', [])
+                total = 0
                 
                 for item in items:
-                    raw_prod = item.get('name', '')
-                    # معالجة الاسم العربي
+                    raw_prod = item.get('name', 'Article')
                     prod_display = proc_ar(raw_prod)
-                    # قص الاسم إذا كان طويلاً
-                    if len(prod_display) > 18:
-                        name = prod_display[:18]
-                    else:
-                        name = f"{prod_display:<18}" # محاذاة
-                        
-                    qty = item.get('qty', 0)
-                    price = item.get('price', 0)
+                    
+                    qty = float(item.get('qty', 0))
+                    price = float(item.get('price', 0))
                     row_total = qty * price
                     total += row_total
                     
-                    qty_str = str(int(qty)) if float(qty).is_integer() else str(qty)
+                    qty_str = str(int(qty)) if qty.is_integer() else str(qty)
                     price_str = str(int(price))
+                    total_str = str(int(row_total))
                     
-                    # محاذاة الأرقام
-                    line = f"{name} {qty_str:<5} {price_str:<9}\n"
-                    buffer += enc(line)
+                    # Print Name
+                    buffer += BOLD_ON + enc(prod_display) + b'\n' + BOLD_OFF
+                    
+                    # Print Details line:  "5 x 100         500"
+                    details_left = f"{qty_str} x {price_str}"
+                    details_line = f"  {details_left:<18} {total_str:>10}"
+                    buffer += enc(details_line + '\n')
 
-                buffer += enc("-" * 32) + b'\n'
-                
-                if doc_type != 'TR':
+                buffer += enc('-' * 32) + b'\n'
+
+                if doc_type != 'TR': # No price for transfers usually
                     buffer += RIGHT + BIG_FONT + BOLD_ON
                     buffer += enc(f"TOTAL: {int(total)} DA\n")
                     buffer += NORM_FONT + BOLD_OFF + LEFT
                     
-                    # معلومات الدفع
+                    # Payment info if available
                     payment = transaction_data.get('payment_info', {})
                     paid = float(payment.get('amount', 0))
                     if paid > 0:
-                        buffer += enc(f"Verse: {int(paid)} DA\n")
-                        reste = total - paid
-                        label_reste = "Reste" if reste > 0 else "Rendu"
-                        buffer += enc(f"{label_reste}: {int(abs(reste))} DA\n")
+                         buffer += enc(f"Verse: {int(paid)} DA\n")
+                         reste = total - paid
+                         label_reste = "Reste" if reste >= 0 else "Rendu"
+                         buffer += enc(f"{label_reste}: {int(abs(reste))} DA\n")
 
+            # 6. Footer
             buffer += CENTER + enc("\nMerci de votre visite\n\n")
             buffer += CUT
-            
+
             output_stream.write(buffer)
             output_stream.flush()
             socket.close()
             
         except Exception as e:
             try:
-                if socket: socket.close()
-            except: pass
-            print(f"Print Error: {e}")
-            # لا تظهر رسالة خطأ مزعجة للمستخدم إذا فشلت الطباعة التلقائية
+                if socket:
+                    socket.close()
+            except:
+                pass
+            print(f'[PRINT ERROR] Final Exception: {e}')
+            self.notify(f'Erreur impression: {e}', 'error')
+
 
     def build(self):
         Builder.load_string(KV_BUILDER)
@@ -552,15 +904,18 @@ class StockApp(MDApp):
         self.theme_cls.primary_palette = 'Blue'
         self.theme_cls.accent_palette = 'Amber'
         self.theme_cls.theme_style = 'Light'
-        self.theme_cls.font_styles['H4'] = ['ArabicFont', 34, False, 0.25]
-        self.theme_cls.font_styles['H5'] = ['ArabicFont', 24, False, 0]
-        self.theme_cls.font_styles['H6'] = ['ArabicFont', 20, False, 0.15]
-        self.theme_cls.font_styles['Subtitle1'] = ['ArabicFont', 16, False, 0.15]
-        self.theme_cls.font_styles['Subtitle2'] = ['ArabicFont', 14, False, 0.1]
-        self.theme_cls.font_styles['Body1'] = ['ArabicFont', 16, False, 0.5]
-        self.theme_cls.font_styles['Body2'] = ['ArabicFont', 14, False, 0.25]
-        self.theme_cls.font_styles['Button'] = ['ArabicFont', 14, True, 1.25]
-        self.theme_cls.font_styles['Caption'] = ['ArabicFont', 12, False, 0.4]
+        
+        # Font Configs
+        self.theme_cls.font_styles["H4"] = ["ArabicFont", 34, False, 0.25]
+        self.theme_cls.font_styles["H5"] = ["ArabicFont", 24, False, 0]
+        self.theme_cls.font_styles["H6"] = ["ArabicFont", 20, False, 0.15]
+        self.theme_cls.font_styles["Subtitle1"] = ["ArabicFont", 16, False, 0.15]
+        self.theme_cls.font_styles["Subtitle2"] = ["ArabicFont", 14, False, 0.1]
+        self.theme_cls.font_styles["Body1"] = ["ArabicFont", 16, False, 0.5]
+        self.theme_cls.font_styles["Body2"] = ["ArabicFont", 14, False, 0.25]
+        self.theme_cls.font_styles["Button"] = ["ArabicFont", 14, True, 1.25]
+        self.theme_cls.font_styles["Caption"] = ["ArabicFont", 12, False, 0.4]
+
         try:
             self.data_dir = self.user_data_dir
             self.offline_store = JsonStore(os.path.join(self.data_dir, 'stock_pending_orders.json'))
@@ -600,7 +955,6 @@ class StockApp(MDApp):
         try:
             from android.permissions import request_permissions, Permission
             from jnius import autoclass
-
             def callback(permissions, results):
                 pass
             Build = autoclass('android.os.Build')
@@ -635,6 +989,21 @@ class StockApp(MDApp):
                 print(f'Cleaned {count} old synced items.')
         except Exception as e:
             print(f'Cleanup Error: {e}')
+
+    def select_entity_from_rv(self, entity_data):
+        server_default_names = ['Comptoir', 'Fournisseur', 'زبون افتراضي', 'مورد افتراضي']
+        final_name = entity_data.get('name', '')
+        if final_name in server_default_names:
+            final_name = 'COMPTOIR'
+        self.selected_entity = {'id': entity_data['id'], 'name': final_name, 'category': entity_data.get('price_category', 'تجزئة')}
+        if hasattr(self, 'btn_ent_screen'):
+            self.btn_ent_screen.text = self.fix_text(final_name)[:15]
+        self.recalculate_cart_prices()
+        if hasattr(self, 'entity_dialog') and self.entity_dialog:
+            self.entity_dialog.dismiss()
+        if hasattr(self, 'pending_entity_next_action') and self.pending_entity_next_action:
+            self.pending_entity_next_action()
+            self.pending_entity_next_action = None
 
     def check_and_load_stats(self):
         today_str = str(datetime.now().date())
@@ -703,9 +1072,8 @@ class StockApp(MDApp):
                 pass
 
     def filter_entity_history_list(self, day_offset=None, specific_date=None):
-        if not hasattr(self, 'entity_history_list_layout'):
+        if not hasattr(self, 'rv_entity_history'):
             return
-        self.entity_history_list_layout.clear_widgets()
         inactive_color = (0.5, 0.5, 0.5, 1)
         active_color = self.theme_cls.primary_color
         target_date = None
@@ -722,16 +1090,15 @@ class StockApp(MDApp):
             self.btn_ent_hist_yesterday.md_bg_color = active_color if day_offset == 1 else inactive_color
             self.btn_ent_hist_date.md_bg_color = inactive_color
             self.btn_ent_hist_date.text = 'CALENDRIER'
-        spinner = MDSpinner(size_hint=(None, None), size=(dp(30), dp(30)), pos_hint={'center_x': 0.5})
-        self.entity_history_list_layout.add_widget(spinner)
+        self.rv_entity_history.data = [{'raw_text': 'Chargement...', 'raw_sec': '', 'amount_text': '', 'icon': 'timer-sand', 'icon_color': [0.5, 0.5, 0.5, 1], 'bg_color': [1, 1, 1, 1], 'is_local': False, 'raw_data': None}]
 
         def on_history_fetched(req, result):
-            self.entity_history_list_layout.clear_widgets()
+            rv_data = []
             if not result:
-                self.entity_history_list_layout.add_widget(OneLineListItem(text='Aucune opération trouvée.'))
+                rv_data.append({'raw_text': 'Aucune opération trouvée.', 'raw_sec': '', 'amount_text': '', 'icon': 'information-outline', 'icon_color': [0.5, 0.5, 0.5, 1], 'bg_color': [1, 1, 1, 1], 'is_local': False, 'raw_data': None})
+                self.rv_entity_history.data = rv_data
                 return
             target_name = self.history_target_entity['name'].lower()
-            count = 0
             doc_markers = ['BV', 'BA', 'FC', 'FF', 'RC', 'RF', 'FP', 'BL', 'TR']
             for item in result:
                 server_entity_name = str(item.get('entity', '')).lower()
@@ -745,7 +1112,6 @@ class StockApp(MDApp):
                     has_doc_ref = any((marker in desc for marker in doc_markers))
                     if is_financial and has_doc_ref and (not is_credit):
                         continue
-                    count += 1
                     amount = float(item.get('amount', 0))
                     time_str = item.get('time', '')
                     icon = 'file-document'
@@ -772,24 +1138,21 @@ class StockApp(MDApp):
                     elif prefix == 'RC':
                         icon = 'keyboard-return'
                         color = (0.8, 0, 0, 1)
-                    final_desc = self.fix_text(f'{desc}')
-                    final_sec = self.fix_text(f"{time_str} • {item.get('user', '')}")
-                    card = CustomHistoryItem(text=final_desc, secondary_text=final_sec, right_text=amount_text, icon=icon, icon_color=color, bg_color=(0.98, 0.98, 0.98, 1))
-                    card.bind(on_release=lambda x, it=item: self.handle_server_history_item(it))
-                    card.edit_callback = lambda it=item: self.fetch_and_edit_transaction(it)
-                    self.entity_history_list_layout.add_widget(card)
-            if count == 0:
-                self.entity_history_list_layout.add_widget(OneLineListItem(text='Aucune transaction (filtrée).'))
+                    final_desc = f'{desc}'
+                    final_sec = f"{time_str} • {item.get('user', '')}"
+                    rv_data.append({'raw_text': final_desc, 'raw_sec': final_sec, 'amount_text': amount_text, 'icon': icon, 'icon_color': color, 'bg_color': (0.98, 0.98, 0.98, 1), 'is_local': False, 'raw_data': item, 'key': ''})
+            if not rv_data:
+                rv_data.append({'raw_text': 'Aucune transaction (filtrée).', 'raw_sec': '', 'amount_text': '', 'icon': 'filter-outline', 'icon_color': [0.5, 0.5, 0.5, 1], 'bg_color': [1, 1, 1, 1], 'is_local': False, 'raw_data': None})
+            self.rv_entity_history.data = rv_data
+            self.rv_entity_history.refresh_from_data()
 
         def on_fail(req, err):
-            self.entity_history_list_layout.clear_widgets()
-            self.entity_history_list_layout.add_widget(OneLineListItem(text='Erreur de connexion serveur.'))
+            self.rv_entity_history.data = [{'raw_text': 'Erreur de connexion serveur.', 'raw_sec': str(err), 'amount_text': '', 'icon': 'wifi-off', 'icon_color': [0.8, 0, 0, 1], 'bg_color': [1, 1, 1, 1], 'is_local': False, 'raw_data': None}]
         if self.is_server_reachable:
             url = f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/history?date={target_date}'
             UrlRequest(url, on_success=on_history_fetched, on_failure=on_fail, on_error=on_fail)
         else:
-            self.entity_history_list_layout.clear_widgets()
-            self.entity_history_list_layout.add_widget(OneLineListItem(text='Mode Hors Ligne'))
+            self.rv_entity_history.data = [{'raw_text': 'Mode Hors Ligne', 'raw_sec': "Impossible de voir l'historique", 'amount_text': '', 'icon': 'wifi-off', 'icon_color': [0.5, 0.5, 0.5, 1], 'bg_color': [1, 1, 1, 1], 'is_local': False, 'raw_data': None}]
 
     def fetch_and_edit_transaction(self, item_data):
         if self.is_seller_mode:
@@ -844,10 +1207,8 @@ class StockApp(MDApp):
         tabs_box.add_widget(self.btn_ent_hist_yesterday)
         tabs_box.add_widget(self.btn_ent_hist_date)
         content.add_widget(tabs_box)
-        scroll = MDScrollView()
-        self.entity_history_list_layout = MDList(spacing=dp(5), padding=dp(5))
-        scroll.add_widget(self.entity_history_list_layout)
-        content.add_widget(scroll)
+        self.rv_entity_history = HistoryRecycleView()
+        content.add_widget(self.rv_entity_history)
         title_text = self.fix_text(f"Historique: {entity['name']}")
         self.entity_hist_dialog = MDDialog(title=title_text, type='custom', content_cls=content, size_hint=(0.95, 0.9))
         self.entity_hist_dialog.open()
@@ -902,6 +1263,8 @@ class StockApp(MDApp):
             def on_success(req, res):
                 if res.get('server_id'):
                     data['server_id'] = res.get('server_id')
+                if res.get('invoice_number'):
+                    data['invoice_number'] = res.get('invoice_number') # Get Invoice ID
                 self.save_to_history(data, synced=True)
                 self.notify('Enregistré', 'success')
                 entity_type_to_refresh = 'account' if self.current_mode == 'client_payment' else 'supplier'
@@ -1022,10 +1385,8 @@ class StockApp(MDApp):
         self.entity_search = SmartTextField(hint_text='Rechercher...', icon_right='magnify')
         self.entity_search.bind(text=lambda instance, text: self.filter_entities_for_manager(text))
         content.add_widget(self.entity_search)
-        scroll = MDScrollView()
-        self.mgmt_entity_list = MDList()
-        scroll.add_widget(self.mgmt_entity_list)
-        content.add_widget(scroll)
+        self.rv_mgmt_entity = MgmtEntityRecycleView()
+        content.add_widget(self.rv_mgmt_entity)
         btn_add = MDFillRoundFlatButton(text='AJOUTER NOUVEAU', size_hint_x=1, md_bg_color=(0, 0.7, 0, 1), on_release=lambda x: self.show_add_edit_entity_dialog(None))
         content.add_widget(btn_add)
         self.mgmt_dialog = MDDialog(title=title_text, type='custom', content_cls=content, size_hint=(0.95, 0.9))
@@ -1038,13 +1399,14 @@ class StockApp(MDApp):
         txt = text.lower()
         filtered = [e for e in source if txt in str(e.get('name', '')).lower()]
         if not filtered:
-            filtered = [e for e in source if self.fix_text(txt) in self.fix_text(str(e.get('name', '')))]
+            fixed = self.fix_text(txt)
+            filtered = [e for e in source if fixed in self.fix_text(str(e.get('name', '')))]
         self.populate_entity_manager_list(filtered)
 
     def populate_entity_manager_list(self, entities):
-        self.mgmt_entity_list.clear_widgets()
         server_default_names = ['Comptoir', 'Fournisseur', 'زبون افتراضي', 'مورد افتراضي']
         sorted_entities = sorted(entities, key=lambda x: x.get('name', '').lower())
+        rv_data = []
         for e in sorted_entities:
             name = e.get('name', '')
             if name in server_default_names:
@@ -1052,17 +1414,11 @@ class StockApp(MDApp):
             balance = float(e.get('balance', 0))
             bal_text = f'{int(balance)} DA'
             col_hex = 'D50000' if balance > 0 else '00C853'
-            display_name = self.fix_text(name)
-            item = TwoLineAvatarIconListItem(text=display_name, secondary_text=f'Solde: [color={col_hex}][b]{bal_text}[/b][/color]', on_release=lambda x, ent=e: self.start_direct_payment_from_manager(ent))
-            left_container = LeftButtonsContainer()
-            profile_icon = MDIcon(icon='account-circle', pos_hint={'center_y': 0.5}, theme_text_color='Custom', text_color=(0.5, 0.5, 0.5, 1))
-            edit_btn = MDIconButton(icon='pencil', theme_text_color='Custom', text_color=(0, 0.5, 0.8, 1), pos_hint={'center_y': 0.5}, on_release=lambda x, ent=e: self.open_entity_edit_menu(ent))
-            left_container.add_widget(profile_icon)
-            left_container.add_widget(edit_btn)
-            item.add_widget(left_container)
-            history_btn = IconRightWidget(icon='clock-time-eight-outline', theme_text_color='Custom', text_color=(0, 0.5, 0.5, 1), on_release=lambda x, ent=e: self.open_entity_history_dialog(ent))
-            item.add_widget(history_btn)
-            self.mgmt_entity_list.add_widget(item)
+            balance_markup = f'Solde: [color={col_hex}][b]{bal_text}[/b][/color]'
+            rv_data.append({'raw_name': name, 'balance_text': balance_markup, 'raw_data': e})
+        if hasattr(self, 'rv_mgmt_entity'):
+            self.rv_mgmt_entity.data = rv_data
+            self.rv_mgmt_entity.refresh_from_data()
 
     def start_direct_payment_from_manager(self, entity):
         self.selected_entity = entity
@@ -1270,22 +1626,13 @@ class StockApp(MDApp):
             self.status_bar_bg.md_bg_color = (0.4, 0.4, 0.4, 1)
 
     def fetch_store_info(self):
-        # طلب المعلومات من السيرفر
         if self.is_server_reachable:
             url = f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/store_info'
             UrlRequest(url, on_success=self.save_store_info_callback)
 
     def save_store_info_callback(self, req, res):
         if res:
-            # حفظ المعلومات محلياً لاستخدامها في الطباعة حتى لو انقطع الاتصال
-            self.store.put('print_header', 
-                           name=res.get('name', 'MagPro Store'), 
-                           address=res.get('address', ''), 
-                           phone=res.get('phone', ''))
-
-    def save_store_info_callback(self, req, res):
-        if res:
-            self.store.put('print_header', name=res.get('name', ''), address=res.get('address', ''), phone=res.get('phone', ''))
+            self.store.put('print_header', name=res.get('name', 'MagPro Store'), address=res.get('address', ''), phone=res.get('phone', ''))
 
     def _on_heartbeat_success(self):
         self.is_server_reachable = True
@@ -1341,6 +1688,8 @@ class StockApp(MDApp):
                 item_data['sync_timestamp'] = time.time()
                 if res.get('server_id'):
                     item_data['order_data']['server_id'] = res.get('server_id')
+                if res.get('invoice_number'):
+                     item_data['order_data']['invoice_number'] = res.get('invoice_number') # Save invoice number from server
                 self.offline_store.put(key, **item_data)
                 self.notify(f"Sync OK: {data.get('doc_type', 'Op')}", 'success')
                 next_step()
@@ -1848,9 +2197,9 @@ class StockApp(MDApp):
                         stock_text = f'Qté: {int(s_store)} | Dép: {int(s_wh)}'
                 icon = 'package-variant' if total_stock > 0 or total_stock < -900000 else 'package-variant-closed'
                 icon_col = [0, 0.6, 0, 1] if total_stock > 0 or total_stock < -900000 else [0.8, 0, 0, 1]
-                display_name = self.fix_text(str(p.get('name', 'Inconnu')))
+                display_name = str(p.get('name', 'Inconnu'))
                 rv_data.append({'name': display_name, 'price_text': price_fmt, 'stock_text': stock_text, 'icon': icon, 'icon_color': icon_col, 'price_color': price_color, 'raw_data': p})
-            except:
+            except Exception as e:
                 continue
         self.rv_products.data = rv_data
         self.rv_products.refresh_from_data()
@@ -1866,13 +2215,17 @@ class StockApp(MDApp):
             filtered = [p for p in self.all_products_raw if self.fix_text(txt) in self.fix_text(str(p.get('name', '')))]
         self.prepare_products_for_rv(filtered)
 
-    def filter_entities(self, instance):
+    def filter_entities(self, instance, text=None):
         query = instance.get_value() if hasattr(instance, 'get_value') else instance.text
+        if not query:
+            self.populate_entity_list(self.entities_source)
+            return
         txt = query.lower()
         filtered = [e for e in self.entities_source if txt in str(e.get('name', '')).lower() or txt in str(e.get('phone', '')).lower()]
         if not filtered:
-            filtered = [e for e in self.entities_source if self.fix_text(txt) in self.fix_text(str(e.get('name', '')))]
-        self.populate_entity_list(filtered, next_action=lambda: self.open_cart_screen(None))
+            fixed_query = self.fix_text(txt)
+            filtered = [e for e in self.entities_source if fixed_query in self.fix_text(str(e.get('name', '')))]
+        self.populate_entity_list(filtered)
 
     def open_mode(self, mode):
         self.current_mode = mode
@@ -2236,26 +2589,24 @@ class StockApp(MDApp):
                 self.btn_loc_screen.md_bg_color = (0.8, 0.4, 0, 1)
 
     def show_entity_selection_dialog(self, x, next_action=None):
+        self.pending_entity_next_action = next_action
         content = MDBoxLayout(orientation='vertical', size_hint_y=None, height=dp(600))
         self.entity_search = SmartTextField(hint_text='Rechercher...', icon_right='magnify')
         self.entity_search.bind(text=self.filter_entities)
         content.add_widget(self.entity_search)
-        scroll = MDScrollView()
-        self.entity_list_layout = MDList()
-        scroll.add_widget(self.entity_list_layout)
-        content.add_widget(scroll)
+        self.rv_entity = EntityRecycleView()
+        content.add_widget(self.rv_entity)
         if self.current_mode in ['sale', 'return_sale', 'client_payment', 'invoice_sale', 'proforma']:
             self.entities_source = self.all_clients
             title_text = 'Choisir un Client'
         else:
             self.entities_source = self.all_suppliers
             title_text = 'Choisir un Fournisseur'
-        self.populate_entity_list(self.entities_source, next_action)
+        self.populate_entity_list(self.entities_source)
         self.entity_dialog = MDDialog(title=title_text, type='custom', content_cls=content, size_hint=(0.9, 0.8))
         self.entity_dialog.open()
 
     def populate_entity_list(self, entities, next_action=None):
-        self.entity_list_layout.clear_widgets()
         server_default_names = ['Comptoir', 'Fournisseur', 'زبون افتراضي', 'مورد افتراضي']
 
         def is_default(name):
@@ -2267,44 +2618,32 @@ class StockApp(MDApp):
             final_list = others
         else:
             final_list = defaults + others
-
-        def select(entity_data):
-            final_name = entity_data.get('name', '')
-            if is_default(final_name):
-                final_name = 'COMPTOIR'
-            self.selected_entity = {'id': entity_data['id'], 'name': final_name, 'category': entity_data.get('price_category', 'تجزئة')}
-            if hasattr(self, 'btn_ent_screen'):
-                self.btn_ent_screen.text = self.fix_text(final_name)[:15]
-            self.recalculate_cart_prices()
-            if self.entity_dialog:
-                self.entity_dialog.dismiss()
-            if next_action:
-                next_action()
+        rv_data = []
         is_client_mode = self.current_mode in ['sale', 'return_sale', 'client_payment', 'invoice_sale', 'proforma']
         bal_color_hex = '00C853' if is_client_mode else 'D50000'
-        for e in final_list[:50]:
+        for e in final_list[:100]:
             raw_name = e.get('name', '')
             is_def_acc = is_default(raw_name)
             if is_def_acc:
                 display_name = 'COMPTOIR'
-                secondary_markup = ''
+                balance_markup = ''
                 icon_name = 'store'
-                icon_col = (0.2, 0.2, 0.2, 1)
+                icon_col = [0.2, 0.2, 0.2, 1]
             else:
-                display_name = self.fix_text(raw_name)
+                display_name = raw_name
                 balance = float(e.get('balance', 0))
                 bal_text = f'{int(balance)} DA'
-                secondary_markup = f'Solde: [color={bal_color_hex}][b][size=46]{bal_text}[/size][/b][/color]'
+                balance_markup = f'Solde: [color={bal_color_hex}][b]{bal_text}[/b][/color]'
                 if balance <= 0:
                     icon_name = 'account-check'
-                    icon_col = (0, 0.7, 0, 1)
+                    icon_col = [0, 0.7, 0, 1]
                 else:
                     icon_name = 'account-alert'
-                    icon_col = (0.9, 0, 0, 1)
-            item = TwoLineAvatarIconListItem(text=display_name, secondary_text=secondary_markup, on_release=lambda x, ent=e: select(ent))
-            icon = IconLeftWidget(icon=icon_name, theme_text_color='Custom', text_color=icon_col)
-            item.add_widget(icon)
-            self.entity_list_layout.add_widget(item)
+                    icon_col = [0.9, 0, 0, 1]
+            rv_data.append({'raw_name': display_name, 'balance_text': balance_markup, 'icon': icon_name, 'icon_color': icon_col, 'raw_data': e})
+        if hasattr(self, 'rv_entity'):
+            self.rv_entity.data = rv_data
+            self.rv_entity.refresh_from_data()
 
     def recalculate_cart_prices(self):
         if not self.cart or not self.selected_entity:
@@ -2504,6 +2843,8 @@ class StockApp(MDApp):
                 def on_invoice_success(req, res):
                     if res.get('server_id'):
                         data['server_id'] = res.get('server_id')
+                    if res.get('invoice_number'):
+                        data['invoice_number'] = res.get('invoice_number') # Get Invoice ID for online print
                     self.save_to_history(data, synced=True)
                     if excess_amount > 0:
                         send_excess()
@@ -2559,18 +2900,13 @@ class StockApp(MDApp):
         tabs_box.add_widget(self.btn_hist_yesterday)
         tabs_box.add_widget(self.btn_hist_date)
         content.add_widget(tabs_box)
-        scroll = MDScrollView()
-        self.history_list_layout = MDList(spacing=dp(5), padding=dp(5))
-        scroll.add_widget(self.history_list_layout)
-        content.add_widget(scroll)
+        self.rv_history = HistoryRecycleView()
+        content.add_widget(self.rv_history)
         self.pending_dialog = MDDialog(title='Historique', type='custom', content_cls=content, size_hint=(0.98, 0.98))
         self.pending_dialog.open()
         self.filter_history_list(day_offset=0)
 
     def filter_history_list(self, day_offset=None, specific_date=None):
-        if not hasattr(self, 'history_list_layout') or not self.history_list_layout:
-            return
-        self.history_list_layout.clear_widgets()
         inactive_color = (0.5, 0.5, 0.5, 1)
         active_color = self.theme_cls.primary_color
         target_date = None
@@ -2588,6 +2924,7 @@ class StockApp(MDApp):
             self.btn_hist_date.md_bg_color = inactive_color
             self.btn_hist_date.text = 'CALENDRIER'
         self.history_view_date = target_date
+        self.history_rv_data = []
         keys = list(self.offline_store.keys())
         local_items = []
         for k in keys:
@@ -2604,21 +2941,11 @@ class StockApp(MDApp):
             except:
                 continue
         local_items.sort(key=lambda x: x[0], reverse=True)
-        if local_items:
-            self.history_list_layout.add_widget(MDLabel(text='En attente (Local)', font_style='Caption', size_hint_y=None, height=dp(20)))
         for ts_val, k, item_store in local_items:
             data = item_store['order_data']
-            if self.is_seller_mode:
-                doc_type = data.get('doc_type', '')
-                is_simple_pay = data.get('is_simple_payment', False)
-                pay_type = data.get('type', '')
-                is_allowed_doc = doc_type in ['BV', 'RC']
-                is_client_payment = is_simple_pay and pay_type == 'client_pay'
-                if not (is_allowed_doc or is_client_payment):
-                    continue
-            dt_str = datetime.fromtimestamp(ts_val).strftime('%H:%M')
-            is_simple_payment = data.get('is_simple_payment', False)
             doc_type = data.get('doc_type', 'BV')
+            is_simple_payment = data.get('is_simple_payment', False)
+            dt_str = datetime.fromtimestamp(ts_val).strftime('%H:%M')
             entity_name = 'Inconnu'
             ent_id = data.get('entity_id')
             if ent_id:
@@ -2648,11 +2975,6 @@ class StockApp(MDApp):
                 bg_col = (0.95, 0.9, 1, 1)
                 icon_color = (0.5, 0, 0.5, 1)
                 amount_text = 'Stock'
-                src_loc = data.get('purchase_location', 'store')
-                if src_loc == 'warehouse':
-                    entity_name = 'Dépôt -> Magasin'
-                else:
-                    entity_name = 'Magasin -> Dépôt'
             elif is_simple_payment:
                 p_type = data.get('type', 'client_pay')
                 if amount >= 0:
@@ -2667,54 +2989,21 @@ class StockApp(MDApp):
                     amount_text = f'- {int(abs(amount))} DA'
             else:
                 full_doc_name = self.DOC_TRANSLATIONS.get(doc_type, doc_type)
-                if doc_type == 'BV':
-                    icon_name = 'cart'
-                    icon_color = (0, 0.5, 0.8, 1)
-                elif doc_type == 'BA':
-                    icon_name = 'truck'
-                    icon_color = (1, 0.6, 0, 1)
-                elif doc_type == 'RC':
-                    icon_name = 'keyboard-return'
-                    bg_col = (1, 0.95, 0.95, 1)
+                if doc_type == 'RC':
                     icon_color = (0.8, 0, 0, 1)
-                elif doc_type == 'RF':
-                    icon_name = 'undo'
-                    icon_color = (0, 0.6, 0.6, 1)
-                elif doc_type == 'FC':
-                    icon_name = 'file-document'
-                    icon_color = (0, 0, 0.8, 1)
-                elif doc_type == 'FP':
-                    icon_name = 'file-document-outline'
-                    icon_color = (0.5, 0, 0.5, 1)
-                elif doc_type == 'FF':
-                    icon_name = 'file-document-edit'
-                    icon_color = (1, 0.4, 0, 1)
-                elif doc_type == 'DP':
-                    icon_name = 'clipboard-list'
-                    icon_color = (0, 0.5, 0.5, 1)
-                elif doc_type == 'BI':
-                    icon_name = 'database-plus'
-                    full_doc_name = 'Bon Initial'
-            header_text = self.fix_text(f'{full_doc_name} - {entity_name}')
-            card = CustomHistoryItem(text=header_text, secondary_text=f'Local • {dt_str} • (Non Sync)', right_text=amount_text, icon=icon_name, icon_color=icon_color, bg_color=bg_col)
-            card.bind(on_release=lambda x, key=k: self.handle_pending_item(key, False))
-            self.history_list_layout.add_widget(card)
+            header_text = f'{full_doc_name} - {entity_name}'
+            self.history_rv_data.append({'raw_text': header_text, 'raw_sec': f'Local • {dt_str} • (Non Sync)', 'amount_text': amount_text, 'icon': icon_name, 'icon_color': icon_color, 'bg_color': bg_col, 'is_local': True, 'key': k, 'raw_data': None})
+        self.rv_history.data = self.history_rv_data
         if self.is_server_reachable:
-            self.history_spinner = MDSpinner(size_hint=(None, None), size=(dp(30), dp(30)), pos_hint={'center_x': 0.5})
-            self.history_list_layout.add_widget(self.history_spinner)
             url = f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/history?date={target_date}'
-            UrlRequest(url, on_success=self.on_history_server_loaded, on_failure=self.on_history_fail, on_error=self.on_history_fail)
-        elif not local_items:
-            self.history_list_layout.add_widget(OneLineListItem(text='Hors ligne - Aucune donnée.'))
+            UrlRequest(url, on_success=self.on_history_server_loaded)
 
     def on_history_server_loaded(self, req, result):
-        if self.history_spinner in self.history_list_layout.children:
-            self.history_list_layout.remove_widget(self.history_spinner)
-        if not result and (not self.history_list_layout.children):
-            self.history_list_layout.add_widget(OneLineListItem(text='Aucune opération serveur.'))
+        if not result:
+            if not any((item['is_local'] for item in self.history_rv_data)):
+                self.history_rv_data.append({'raw_text': 'Aucune opération serveur.', 'raw_sec': '', 'amount_text': '', 'icon': 'alert-circle-outline', 'icon_color': (0.5, 0.5, 0.5, 1), 'bg_color': (1, 1, 1, 1), 'is_local': False, 'key': '', 'raw_data': None})
+                self.rv_history.data = self.history_rv_data
             return
-        if result:
-            self.history_list_layout.add_widget(MDLabel(text='Historique Serveur', font_style='Caption', size_hint_y=None, height=dp(20)))
         main_doc_prefixes = ['BV', 'BA', 'RC', 'RF', 'TR', 'FP', 'DP', 'BI', 'FC', 'FF']
         default_names = ['زبون افتراضي', 'مورد افتراضي', 'DEFAULT_CUSTOMER', 'DEFAULT_SUPPLIER', 'Comptoir', 'Fournisseur']
         for item in result:
@@ -2732,10 +3021,8 @@ class StockApp(MDApp):
             entity_display = raw_entity_name.replace('➔', ' -> ').replace('\uf0e0', ' -> ').replace('\uf0da', ' -> ')
             if is_transfer:
                 lower_raw = raw_entity_name.lower()
-                idx_dep = lower_raw.find('dép')
-                idx_mag = lower_raw.find('mag')
-                if idx_dep != -1 and idx_mag != -1:
-                    if idx_dep < idx_mag:
+                if 'dép' in lower_raw and 'mag' in lower_raw:
+                    if lower_raw.find('dép') < lower_raw.find('mag'):
                         entity_display = 'Dépôt -> Magasin'
                     else:
                         entity_display = 'Magasin -> Dépôt'
@@ -2747,16 +3034,13 @@ class StockApp(MDApp):
                 pass
             elif has_doc_ref:
                 continue
-            else:
-                if amount == 0:
-                    continue
-                pass
+            elif amount == 0:
+                continue
             full_doc_name = self.DOC_TRANSLATIONS.get(prefix, desc)
             bg_col = (0.95, 0.98, 1, 1)
             icon_name = 'file-document'
             icon_color = (0, 0.5, 0.8, 1)
             amount_text = f'{int(abs(amount))} DA'
-            is_credit_kw = any((k in desc_lower for k in ['crédit', 'credit', 'dette', 'دين', 'solde']))
             is_reglement_kw = any((k in desc_lower for k in ['règlement', 'reglement', 'سداد', 'supplier pay']))
             is_versement_kw = any((k in desc_lower for k in ['versement', 'تحصيل', 'دفعة', 'client pay']))
             if is_transfer:
@@ -2767,10 +3051,7 @@ class StockApp(MDApp):
                 icon_color = (0.5, 0, 0.5, 1)
             elif not is_main_doc:
                 if amount < 0 or is_versement_kw or is_reglement_kw:
-                    if is_reglement_kw:
-                        full_doc_name = 'Règlement'
-                    else:
-                        full_doc_name = 'Versement'
+                    full_doc_name = 'Règlement' if is_reglement_kw else 'Versement'
                     icon_name = 'cash-plus'
                     icon_color = (0, 0.7, 0, 1)
                     amount_text = f'+ {int(abs(amount))} DA'
@@ -2784,14 +3065,18 @@ class StockApp(MDApp):
                 full_doc_name = 'Bon de Vente'
             elif prefix == 'BA':
                 icon_name = 'truck'
+                icon_color = (1, 0.6, 0, 1)
             elif prefix == 'RC':
                 icon_name = 'keyboard-return'
                 bg_col = (1, 0.95, 0.95, 1)
+                icon_color = (0.8, 0, 0, 1)
             elif prefix == 'RF':
                 icon_name = 'undo'
+                icon_color = (0, 0.6, 0.6, 1)
             elif prefix == 'FC':
                 icon_name = 'file-document'
                 full_doc_name = 'Facture Vente'
+                icon_color = (0, 0, 0.8, 1)
             elif prefix == 'FP':
                 icon_name = 'file-document-outline'
                 icon_color = (0.5, 0, 0.5, 1)
@@ -2808,16 +3093,16 @@ class StockApp(MDApp):
                 icon_name = 'database-plus'
                 full_doc_name = 'Bon Initial'
             clean_desc = desc.replace('Versement (Excédent)', 'Versement').replace('Règlement (Excédent)', 'Règlement')
-            final_title = self.fix_text(f'{full_doc_name} - {entity_display}')
-            final_desc = self.fix_text(f"{clean_desc} • {item['user']} • {item['time']}")
-            card = CustomHistoryItem(text=final_title, secondary_text=final_desc, right_text=amount_text, icon=icon_name, icon_color=icon_color, bg_color=bg_col)
-            card.bind(on_release=lambda x, it=item: self.handle_server_history_item(it))
-            self.history_list_layout.add_widget(card)
+            final_title = f'{full_doc_name} - {entity_display}'
+            final_desc = f"{clean_desc} • {item['user']} • {item['time']}"
+            self.history_rv_data.append({'raw_text': final_title, 'raw_sec': final_desc, 'amount_text': amount_text, 'icon': icon_name, 'icon_color': icon_color, 'bg_color': bg_col, 'is_local': False, 'key': '', 'raw_data': item})
+        self.rv_history.data = self.history_rv_data
+        self.rv_history.refresh_from_data()
 
     def on_history_fail(self, req, err):
-        if self.history_spinner in self.history_list_layout.children:
-            self.history_list_layout.remove_widget(self.history_spinner)
-        self.history_list_layout.add_widget(OneLineListItem(text='Erreur chargement serveur.'))
+        self.history_rv_data.append({'raw_text': 'Erreur chargement serveur.', 'raw_sec': str(err), 'amount_text': '', 'icon': 'alert-circle', 'icon_color': (0.8, 0, 0, 1), 'bg_color': (1, 1, 1, 1), 'is_local': False, 'key': '', 'raw_data': None})
+        self.rv_history.data = self.history_rv_data
+        self.rv_history.refresh_from_data()
 
     def handle_pending_item(self, key, is_synced):
         if self.is_seller_mode:
@@ -2909,10 +3194,27 @@ class StockApp(MDApp):
                 self.open_cart_screen(None)
             except Exception as e:
                 self.notify(f'Erreur chargement: {e}', 'error')
+                
+        def do_print(x):
+            try:
+                item_data = self.offline_store.get(key)
+                data_to_print = item_data['order_data']
+                threading.Thread(target=self.print_ticket_bluetooth, args=(data_to_print,), daemon=True).start()
+                self.notify('Impression lancée...', 'info')
+            except Exception as e:
+                self.notify(f'Erreur Impression: {e}', 'error')
+
         title_text = 'Action (Synchronisé)' if is_synced else 'Action (Non Synchronisé)'
         if is_synced:
             title_text += ' [Admin]'
-        self.action_dialog = MDDialog(title=title_text, text='Que voulez-vous faire ?', buttons=[MDFlatButton(text='SUPPRIMER', theme_text_color='Error', on_release=do_delete), MDRaisedButton(text='MODIFIER', on_release=do_load)])
+            
+        buttons = [
+            MDFlatButton(text='SUPPRIMER', theme_text_color='Error', on_release=do_delete), 
+            MDRaisedButton(text='IMPRIMER', on_release=do_print),
+            MDRaisedButton(text='MODIFIER', on_release=do_load)
+        ]
+        
+        self.action_dialog = MDDialog(title=title_text, text='Que voulez-vous faire ?', buttons=buttons)
         self.action_dialog.open()
 
     def view_synced_transaction(self, data):
@@ -2940,7 +3242,16 @@ class StockApp(MDApp):
             content.add_widget(scroll)
             lbl = MDLabel(text=f'TOTAL: {total} DA', halign='center', font_style='H5', bold=True, size_hint_y=None, height=dp(40))
             content.add_widget(lbl)
-        MDDialog(title='Détails (Synchronisé)', type='custom', content_cls=content, size_hint=(0.95, 0.95), buttons=[MDFlatButton(text='FERMER', on_release=lambda x: x.parent.parent.parent.parent.dismiss())]).open()
+            
+        def do_print(x):
+             threading.Thread(target=self.print_ticket_bluetooth, args=(data,), daemon=True).start()
+             
+        buttons = [
+            MDRaisedButton(text='IMPRIMER', on_release=do_print),
+            MDFlatButton(text='FERMER', on_release=lambda x: x.parent.parent.parent.parent.dismiss())
+        ]
+        
+        MDDialog(title='Détails (Synchronisé)', type='custom', content_cls=content, size_hint=(0.95, 0.95), buttons=buttons).open()
 
     def handle_server_history_item(self, item_data):
         if self.pending_dialog:
@@ -3056,19 +3367,41 @@ class StockApp(MDApp):
         can_edit = True
         if self.is_seller_mode and (not is_today):
             can_edit = False
+            
+        def do_print(x):
+            # Prepare print data structure from header_data and items
+            print_data = {
+                'server_id': header_data.get('id'),
+                'invoice_number': header_data.get('desc'), # Usually stores ref here in list
+                'timestamp': header_data.get('time'),
+                'user_name': header_data.get('user'),
+                'entity': header_data.get('entity'),
+                'entity_id': header_data.get('entity_id'),
+                'amount': header_data.get('amount'),
+                'doc_type': prefix,
+                'items': items,
+                'is_simple_payment': is_financial_op,
+                'type': 'client_pay' if amount > 0 else 'credit', # approximation
+                'payment_info': {'amount': paid_val}
+            }
+            threading.Thread(target=self.print_ticket_bluetooth, args=(print_data,), daemon=True).start()
+
+        buttons_box = MDBoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height=dp(50), padding=[0, 10, 0, 0])
+        btn_print = MDRaisedButton(text='IMPRIMER', md_bg_color=(0.2, 0.6, 0.2, 1), size_hint_x=0.33, on_release=do_print)
+        buttons_box.add_widget(btn_print)
+        
         if can_edit:
-            buttons_box = MDBoxLayout(orientation='horizontal', spacing=10, size_hint_y=None, height=dp(50), padding=[0, 10, 0, 0])
-            btn_delete = MDFillRoundFlatButton(text='SUPPRIMER', md_bg_color=(0.8, 0, 0, 1), size_hint_x=0.5, on_release=lambda x: self.confirm_delete_server_transaction(header_data))
+            btn_delete = MDFillRoundFlatButton(text='SUPPRIMER', md_bg_color=(0.8, 0, 0, 1), size_hint_x=0.33, on_release=lambda x: self.confirm_delete_server_transaction(header_data))
             has_items = items and len(items) > 0
+            buttons_box.add_widget(btn_delete)
+            
             if not is_financial_op or has_items or prefix == 'BI':
-                btn_edit = MDFillRoundFlatButton(text='MODIFIER', md_bg_color=(0, 0.5, 0.8, 1), size_hint_x=0.5, on_release=lambda x: self.load_server_transaction_for_edit(header_data, items))
-                buttons_box.add_widget(btn_delete)
+                btn_edit = MDFillRoundFlatButton(text='MODIFIER', md_bg_color=(0, 0.5, 0.8, 1), size_hint_x=0.33, on_release=lambda x: self.load_server_transaction_for_edit(header_data, items))
                 buttons_box.add_widget(btn_edit)
-            else:
-                buttons_box.add_widget(btn_delete)
-            content.add_widget(buttons_box)
         else:
             content.add_widget(MDLabel(text='Modification impossible (Date passée)', halign='center', theme_text_color='Error', font_style='Caption', size_hint_y=None, height=dp(30)))
+            
+        content.add_widget(buttons_box)
         self.srv_dialog = MDDialog(title='Détails', type='custom', content_cls=content, size_hint=(0.95, 0.95), buttons=[MDFlatButton(text='FERMER', on_release=lambda x: self.srv_dialog.dismiss())])
         self.srv_dialog.open()
 
