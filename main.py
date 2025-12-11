@@ -34,11 +34,11 @@ from kivymd.uix.textfield import MDTextField
 from kivymd.uix.toolbar import MDTopAppBar
 from kivy.uix.camera import Camera
 try:
-    from zxingcpp import read_barcodes
+    from pyzbar.pyzbar import decode
     from PIL import Image as PILImage
 except ImportError:
-    read_barcodes = None
-    print("[WARNING] zxing-cpp or Pillow library not found.")
+    decode = None
+    print("[WARNING] pyzbar library not found.")
 import arabic_reshaper
 import json
 import os
@@ -1782,7 +1782,7 @@ class StockApp(MDApp):
         self.prod_toolbar = MDTopAppBar(title='Produits', left_action_items=[['arrow-left', lambda x: self.go_back()]])
         layout.add_widget(self.prod_toolbar)
         
-        # --- تعديل: إضافة زر الباركود بجانب البحث ---
+        # --- التعديل: إضافة زر الباركود ---
         self.prod_search_layout = MDBoxLayout(padding=(10, 5), spacing=dp(5), size_hint_y=None, height=dp(60))
         
         # زر الباركود
@@ -1803,7 +1803,7 @@ class StockApp(MDApp):
         
         self.prod_search_layout.add_widget(self.search_field)
         layout.add_widget(self.prod_search_layout)
-        # ---------------------------------------------
+        # ----------------------------------
 
         self.rv_products = ProductRecycleView()
         layout.add_widget(self.rv_products)
@@ -3844,25 +3844,20 @@ class StockApp(MDApp):
             self.sm.current = 'dashboard'
 
 # ---------------------------------------------------------
-    # BARCODE SCANNER LOGIC (zxing-cpp)
+    # BARCODE SCANNER LOGIC (ANDROID / pyzbar)
     # ---------------------------------------------------------
     def open_barcode_scanner(self, instance):
-        # التحقق من وجود مكتبة الباركود
-        if not read_barcodes:
-            self.notify("Erreur: Librairie zxing-cpp manquante", "error")
-            return
-            
-        try:
-            # محاولة تشغيل الكاميرا
-            # index=0 يعني الكاميرا الافتراضية، إذا كان لديك كاميرا خارجية جرب 1
-            self.camera_widget = Camera(play=True, index=0, resolution=(640, 480))
-        except Exception as e:
-            # في حال فشل تشغيل الكاميرا (غير موجودة أو مشغولة)
-            print(f"[ERROR] Camera init failed: {e}")
-            self.notify("Erreur: Impossible d'ouvrir la caméra (Non détectée)", "error")
+        if not decode:
+            self.notify("Erreur: Librairie pyzbar manquante", "error")
             return
         
-        # زر للإغلاق
+        # حماية ضد أخطاء الكاميرا
+        try:
+            self.camera_widget = Camera(play=True, index=0, resolution=(640, 480))
+        except Exception as e:
+            self.notify("Erreur Caméra", "error")
+            return
+        
         close_btn = MDIconButton(
             icon="close", 
             pos_hint={'center_x': .5, 'y': .05}, 
@@ -3873,7 +3868,6 @@ class StockApp(MDApp):
             on_release=self.close_barcode_scanner
         )
         
-        # حاوية الكاميرا
         content = MDFloatLayout()
         content.add_widget(self.camera_widget)
         content.add_widget(close_btn)
@@ -3886,7 +3880,6 @@ class StockApp(MDApp):
         )
         self.scan_dialog.open()
         
-        # بدء عملية الفحص المتكرر
         self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/10.0)
 
     def close_barcode_scanner(self, *args):
@@ -3898,21 +3891,22 @@ class StockApp(MDApp):
             self.scan_dialog.dismiss()
 
     def detect_barcode_frame(self, dt):
-        if not read_barcodes or not hasattr(self, 'camera_widget') or not self.camera_widget.texture:
+        if not decode or not hasattr(self, 'camera_widget') or not self.camera_widget.texture:
             return
 
         try:
             texture = self.camera_widget.texture
             size = texture.size
             pixels = texture.pixels
+            
             pil_image = PILImage.frombytes(mode='RGBA', size=size, data=pixels)
             
-            # قراءة الباركود باستخدام zxing-cpp
-            results = read_barcodes(pil_image)
+            # قراءة باستخدام pyzbar
+            barcodes = decode(pil_image)
             
-            if results:
-                for result in results:
-                    barcode_data = result.text
+            if barcodes:
+                for barcode in barcodes:
+                    barcode_data = barcode.data.decode("utf-8")
                     if barcode_data:
                         print(f"Barcode Found: {barcode_data}")
                         self.close_barcode_scanner()
@@ -3974,7 +3968,6 @@ class StockApp(MDApp):
             self.notify(f"{product['name']} Ajouté (1)", "success")
         except Exception as e:
             self.notify(f"Erreur ajout panier: {e}", "error")
-    # ---------------------------------------------------------
 
 if __name__ == '__main__':
     StockApp().run()
