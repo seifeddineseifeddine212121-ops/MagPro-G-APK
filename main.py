@@ -3911,8 +3911,9 @@ class StockApp(MDApp):
         self.last_scan_time = 0
         
         try:
-            # إعداد الكاميرا
-            self.camera_widget = Camera(play=True, index=0, resolution=(1280, 720), allow_stretch=True, keep_ratio=False)
+            # 1. رفع الدقة إلى Full HD (1920x1080)
+            # 2. keep_ratio=False: لإجبار الصورة على ملء الشاشة وإزالة السواد
+            self.camera_widget = Camera(play=True, index=0, resolution=(1920, 1080), allow_stretch=True, keep_ratio=False)
             
             # تصحيح الدوران
             with self.camera_widget.canvas.before:
@@ -3929,7 +3930,7 @@ class StockApp(MDApp):
         # --- التصميم ---
         root_layout = MDBoxLayout(orientation='vertical', spacing=0, padding=0)
         
-        # 1. الهيدر
+        # الهيدر
         header = MDBoxLayout(size_hint_y=None, height=dp(50), md_bg_color=(0, 0.7, 0, 1), padding=[dp(10), 0])
         header.add_widget(MDIcon(icon="barcode-scan", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
         header.add_widget(MDLabel(text="  Mode Scanner", bold=True, theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
@@ -3937,12 +3938,12 @@ class StockApp(MDApp):
         header.add_widget(close_top)
         root_layout.add_widget(header)
         
-        # 2. الكاميرا
+        # الكاميرا (داخل FloatLayout لتأخذ كل المساحة وتتمدد)
         cam_wrapper = MDFloatLayout(size_hint_y=1) 
         cam_wrapper.add_widget(self.camera_widget)
         root_layout.add_widget(cam_wrapper)
         
-        # 3. المنطقة السفلية
+        # المنطقة السفلية
         bottom_area = MDCard(orientation='vertical', size_hint_y=None, height=dp(250), radius=[20, 20, 0, 0], elevation=4, md_bg_color=(1, 1, 1, 1))
         
         list_header = MDBoxLayout(size_hint_y=None, height=dp(30), padding=[dp(20), dp(5)])
@@ -3955,7 +3956,6 @@ class StockApp(MDApp):
         scroll.add_widget(self.scan_list_widget)
         bottom_area.add_widget(scroll)
         
-        # --- التصحيح هنا: حذفنا خاصية radius التي سببت المشكلة ---
         btn_finish = MDRaisedButton(
             text="TERMINER & AJOUTER AU PANIER",
             font_size="18sp",
@@ -3965,9 +3965,8 @@ class StockApp(MDApp):
             elevation=0,
             on_release=self.finish_continuous_scan
         )
-        # -------------------------------------------------------
-        
         bottom_area.add_widget(btn_finish)
+        
         root_layout.add_widget(bottom_area)
         
         self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0,0,0,1))
@@ -4033,14 +4032,55 @@ class StockApp(MDApp):
                 break
         
         if found_product:
+            # --- التحقق من التكرار ---
+            # نفحص هل المنتج موجود بالفعل في القائمة المؤقتة؟
+            is_duplicate = False
+            for item in self.temp_scanned_cart:
+                if item['id'] == found_product['id']:
+                    is_duplicate = True
+                    break
+            
+            if is_duplicate:
+                # إذا كان مكرراً، نظهر التنبيه ونوقف الإضافة
+                self.show_duplicate_alert(found_product.get('name', 'Produit'))
+                return
+            # ------------------------
+
             # إضافة للمصفوفة المؤقتة
             self.temp_scanned_cart.append(found_product)
-            self.update_scan_list_ui() # تحديث الواجهة
+            self.update_scan_list_ui()
             
-            # صوت تنبيه بسيط (اختياري، اهتزاز الواجهة)
-            # self.notify(f"Scanné: {found_product.get('name')}", "success")
+            # صوت تنبيه بسيط (يمكنك تفعيل هذا السطر إذا أردت صوتاً)
+            # os.system('echo -n "\a"') 
         else:
             self.notify(f"Inconnu: {code}", "error")
+
+    def show_duplicate_alert(self, product_name):
+        # دالة لإظهار نافذة تنبيه عند تكرار المنتج
+        # نستخدم مخزن مؤقت (Flag) لمنع ظهور النافذة مرتين في نفس اللحظة
+        if hasattr(self, 'is_showing_alert') and self.is_showing_alert:
+            return
+            
+        self.is_showing_alert = True
+        
+        def close_alert(*args):
+            self.dup_dialog.dismiss()
+            self.is_showing_alert = False
+
+        short_name = self.fix_text(product_name)[:30]
+        self.dup_dialog = MDDialog(
+            title="Déjà scanné !",
+            text=f"Le produit:\n[b]{short_name}[/b]\n\nest déjà dans la liste.",
+            buttons=[
+                MDRaisedButton(
+                    text="OK", 
+                    md_bg_color=(0.8, 0, 0, 1), 
+                    on_release=close_alert
+                )
+            ],
+            size_hint=(0.85, None)
+        )
+        self.dup_dialog.open()
 
     def update_scan_list_ui(self):
         # إعادة رسم القائمة لتحديث الأرقام
