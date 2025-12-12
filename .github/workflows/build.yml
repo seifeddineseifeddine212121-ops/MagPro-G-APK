@@ -37,7 +37,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-
       - name: Cache Buildozer Global Directory
         uses: actions/cache@v4
         with:
@@ -68,7 +67,9 @@ jobs:
             python3-dev \
             zip \
             unzip \
-            zlib1g-dev
+            zlib1g-dev \
+            gettext \
+            autopoint
 
       - name: Install Buildozer
         run: |
