@@ -39,6 +39,9 @@ try:
 except ImportError:
     decode = None
     print("[WARNING] pyzbar library not found.")
+from kivy.uix.modalview import ModalView
+from kivy.graphics.context_instructions import Rotate
+from kivy.graphics.context_instructions import PushMatrix, PopMatrix
 import arabic_reshaper
 import json
 import os
@@ -3873,48 +3876,60 @@ class StockApp(MDApp):
 
     def _launch_camera_widget(self):
         try:
-            # 1. إزالة resolution لتجنب المشاكل (تلقائي)
-            # 2. تفعيل allow_stretch لتعبئة الشاشة
-            self.camera_widget = Camera(play=True, index=0, allow_stretch=True, keep_ratio=False)
+            # إعداد الكاميرا
+            # ملاحظة: index=0 هي الخلفية عادة
+            self.camera_widget = Camera(play=True, index=0, resolution=(640, 480), allow_stretch=True, keep_ratio=False)
+            
+            # تصحيح دوران الكاميرا (لأنها تظهر مقلوبة في الصورة)
+            # نقوم بتدويرها -90 درجة لتناسب وضع الهاتف العمودي
+            with self.camera_widget.canvas.before:
+                PushMatrix()
+                self.rotation = Rotate(angle=-90, origin=self.camera_widget.center)
+            with self.camera_widget.canvas.after:
+                PopMatrix()
+                
+            # تحديث نقطة الارتكاز للدوران عند تغيير الحجم
+            self.camera_widget.bind(center=lambda instance, value: setattr(self.rotation, 'origin', instance.center))
+
         except Exception as e:
             print(f"[CAMERA ERROR] {e}")
             self.notify("Erreur init caméra", "error")
             return
         
-        # زر الإغلاق (تصغير الحجم قليلاً ووضعه في الأسفل)
+        # حاوية كاملة الشاشة
+        content = MDFloatLayout()
+        content.add_widget(self.camera_widget)
+        
+        # زر إغلاق عائم وكبير في الأسفل
         close_btn = MDIconButton(
-            icon="close", 
-            pos_hint={'center_x': .5, 'y': .02}, 
-            icon_size="32sp",
+            icon="close",
+            pos_hint={'center_x': .5, 'y': .05},
+            icon_size="64sp", # حجم كبير
             theme_text_color="Custom",
             text_color=(1, 1, 1, 1),
-            md_bg_color=(1, 0, 0, 1),
+            md_bg_color=(1, 0, 0, 0.6), # أحمر شفاف قليلاً
             on_release=self.close_barcode_scanner
         )
-        
-        # 3. تحديد حجم ثابت للحاوية لضمان ظهور الكاميرا
-        content = MDFloatLayout(size_hint_y=None, height=dp(400))
-        content.add_widget(self.camera_widget)
         content.add_widget(close_btn)
         
-        self.scan_dialog = MDDialog(
-            title="Scan Code-barres",
-            type="custom",
-            content_cls=content,
-            size_hint=(0.9, None), # العرض 90%
-        )
+        # استخدام ModalView بدلاً من MDDialog لفتح شاشة كاملة
+        self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0,0,0,1))
+        self.scan_dialog.add_widget(content)
         self.scan_dialog.open()
         
-        # تقليل سرعة الفحص قليلاً لتخفيف الحمل على الهاتف
+        # تشغيل الفحص
         self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/5.0)
 
     def close_barcode_scanner(self, *args):
         if hasattr(self, 'scan_event') and self.scan_event:
             self.scan_event.cancel()
+        
         if hasattr(self, 'camera_widget'):
             self.camera_widget.play = False
+            
         if hasattr(self, 'scan_dialog') and self.scan_dialog:
             self.scan_dialog.dismiss()
+            self.scan_dialog = None # تفريغ المتغير
 
     def detect_barcode_frame(self, dt):
         if not decode or not hasattr(self, 'camera_widget') or not self.camera_widget.texture:
