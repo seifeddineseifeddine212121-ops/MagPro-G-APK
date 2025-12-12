@@ -3939,10 +3939,11 @@ class StockApp(MDApp):
         self.last_scan_time = 0
         
         try:
-            # الكاميرا تأخذ كامل الشاشة
-            self.camera_widget = Camera(play=True, index=0, resolution=(1920, 1080), allow_stretch=True, keep_ratio=False)
-            self.camera_widget.size_hint = (1, 1)
+            # --- الحل الجذري للثقل ---
+            # نستخدم دقة 640x480. هي الأسرع على الإطلاق وتزيل التأخير تماماً
+            self.camera_widget = Camera(play=True, index=0, resolution=(640, 480), allow_stretch=True, keep_ratio=False)
             
+            # تدوير الكاميرا
             with self.camera_widget.canvas.before:
                 PushMatrix()
                 self.rotation = Rotate(angle=-90, origin=self.camera_widget.center)
@@ -3954,54 +3955,73 @@ class StockApp(MDApp):
             self.notify("Erreur init caméra", "error")
             return
         
-        root_layout = MDFloatLayout()
+        # --- التخطيط العمودي (Vertical Box) ---
+        root_layout = MDBoxLayout(orientation='vertical', spacing=0, padding=0)
         
-        # 1. الكاميرا
-        root_layout.add_widget(self.camera_widget)
+        # 1. الجزء العلوي: الكاميرا (40% من الشاشة)
+        # نضعها في FloatLayout لنتحكم في زر الإغلاق فوقها
+        top_container = MDFloatLayout(size_hint_y=0.4)
         
-        # 2. الهيدر
-        header = MDBoxLayout(size_hint=(1, None), height=dp(60), md_bg_color=(0, 0, 0, 0.5), padding=[dp(15), 0], pos_hint={'top': 1})
-        header.add_widget(MDIcon(icon="barcode-scan", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
-        header.add_widget(MDLabel(text="  Scanner", bold=True, font_style="H6", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
-        close_top = MDIconButton(icon="close", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}, icon_size="32sp", on_release=self.close_barcode_scanner)
-        header.add_widget(close_top)
-        root_layout.add_widget(header)
+        # إضافة الكاميرا
+        top_container.add_widget(self.camera_widget)
         
-        # 3. القائمة السفلية
-        bottom_area = MDCard(orientation='vertical', size_hint=(1, None), height=dp(320), elevation=10, md_bg_color=(1, 1, 1, 0.95), pos_hint={'bottom': 1})
-        # ملاحظة: حذفنا radius من الـ MDCard أيضاً لضمان التوافق، أو يمكنك تركه إذا كان مدعوماً في Card
+        # زر إغلاق شفاف فوق الكاميرا
+        close_btn = MDIconButton(
+            icon="close",
+            pos_hint={'top': 0.95, 'right': 0.95},
+            theme_text_color="Custom",
+            text_color=(1, 1, 1, 1),
+            md_bg_color=(0, 0, 0, 0.3),
+            on_release=self.close_barcode_scanner
+        )
+        top_container.add_widget(close_btn)
         
-        list_header = MDBoxLayout(size_hint_y=None, height=dp(40), padding=[dp(20), dp(10)])
-        self.lbl_scan_count = MDLabel(text="Articles: 0", font_style="Subtitle1", bold=True, theme_text_color="Primary")
+        # خط فاصل أحمر ليعرف المستخدم أين يوجه الباركود
+        scanner_line = MDCard(
+            size_hint=(0.8, None), 
+            height=dp(2), 
+            md_bg_color=(1, 0, 0, 0.8), 
+            pos_hint={'center_x': 0.5, 'center_y': 0.5}
+        )
+        top_container.add_widget(scanner_line)
+        
+        root_layout.add_widget(top_container)
+        
+        # 2. الجزء السفلي: القائمة (60% من الشاشة - تأخذ الباقي تلقائياً)
+        bottom_container = MDBoxLayout(orientation='vertical', size_hint_y=0.6, md_bg_color=(1, 1, 1, 1))
+        
+        # هيدر القائمة
+        list_header = MDBoxLayout(size_hint_y=None, height=dp(45), padding=[dp(15), 0], md_bg_color=(0.95, 0.95, 0.95, 1))
+        self.lbl_scan_count = MDLabel(text="Articles scannés: 0", font_style="Subtitle1", bold=True, valign='center')
         list_header.add_widget(self.lbl_scan_count)
-        bottom_area.add_widget(list_header)
+        bottom_container.add_widget(list_header)
         
-        scroll = MDScrollView(size_hint_y=1)
+        # القائمة
+        scroll = MDScrollView()
         self.scan_list_widget = MDList()
         scroll.add_widget(self.scan_list_widget)
-        bottom_area.add_widget(scroll)
+        bottom_container.add_widget(scroll)
         
-        # --- التصحيح هنا: حذف سطر radius ---
+        # زر الإنهاء
         btn_finish = MDRaisedButton(
-            text="AJOUTER AU PANIER",
-            font_size="19sp",
+            text="CONFIRMER & AJOUTER",
+            font_size="18sp",
             size_hint=(1, None),
-            height=dp(60),
+            height=dp(55),
             md_bg_color=(0, 0.7, 0, 1),
             elevation=0,
-            # radius=[0,0,0,0],  <-- تم الحذف
             on_release=self.finish_continuous_scan
         )
-        # -----------------------------------
+        bottom_container.add_widget(btn_finish)
         
-        bottom_area.add_widget(btn_finish)
+        root_layout.add_widget(bottom_container)
         
-        root_layout.add_widget(bottom_area)
-        
+        # فتح النافذة (Full Screen)
         self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0,0,0,1))
         self.scan_dialog.add_widget(root_layout)
         self.scan_dialog.open()
         
+        # مسح سريع (كل 0.1 ثانية) لأن الدقة منخفضة الآن ويتحملها الجهاز
         self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/10.0)
 
     def close_barcode_scanner(self, *args):
@@ -4061,26 +4081,21 @@ class StockApp(MDApp):
                 break
         
         if found_product:
-            # 1. التحقق من التكرار
+            # التحقق من التكرار
             for item in self.temp_scanned_cart:
                 if item['id'] == found_product['id']:
-                    # صوت خطأ (طويل قليلاً) في حالة التكرار - اختياري
-                    if platform == 'android' and hasattr(self, 'tone_gen') and self.tone_gen:
-                         self.tone_gen.startTone(24, 500) 
-                    
                     self.show_duplicate_alert(found_product.get('name', 'Produit'))
                     return
 
-            # 2. الإضافة والنجاح
+            # إضافة المنتج
             self.temp_scanned_cart.append(found_product)
+            
+            # تحديث الواجهة
             self.update_scan_list_ui()
             
-            # --- إضافة: تشغيل صوت النجاح ---
+            # تشغيل الصوت (سيكون سريعاً الآن)
             self.play_beep()
-            # -----------------------------
-            
         else:
-            # منتج غير موجود
             self.show_not_found_alert(code)
 
     def show_duplicate_alert(self, product_name):
@@ -4111,32 +4126,50 @@ class StockApp(MDApp):
         self.dup_dialog.open()
 
     def update_scan_list_ui(self):
+        # 1. تفريغ القائمة الحالية
         self.scan_list_widget.clear_widgets()
+        
+        # 2. تحديث العداد
         count = len(self.temp_scanned_cart)
         self.lbl_scan_count.text = f"Articles scannés: {count}"
         
-        # عرض القائمة (الجديد في الأعلى)
+        if count == 0:
+            return
+
+        # 3. إعادة بناء القائمة (عكسياً: الأحدث في الأعلى)
+        # نستخدم reversed لكي يظهر آخر منتج تم مسحه في قمة القائمة
         for index, prod in enumerate(reversed(self.temp_scanned_cart)):
-            real_index = count - index
-            prod_name = self.fix_text(prod.get('name', 'Product'))
-            price = prod.get('price', 0)
+            # حساب الترتيب الصحيح (1, 2, 3...)
+            real_number = count - index
             
-            # استخدام عنصر خفيف (OneLine Avatar + Icon)
-            # نقوم بتخصيص النص ليشمل السعر
-            text_content = f"[b]{real_index}.[/b] {prod_name[:25]}.. [color=#008000]({price} DA)[/color]"
+            prod_name = self.fix_text(prod.get('name', 'Inconnu'))
+            # عرض السعر حسب نوع الزبون المختار حالياً
+            final_price = prod.get('price', 0)
+            # إذا كنا قد حسبنا السعر مسبقاً في الدالة الأخرى، نستخدمه، وإلا نستخدم السعر الافتراضي
             
-            item_ui = OneLineListItem(text=text_content, theme_text_color="Custom", text_color=(0.2, 0.2, 0.2, 1))
-            
-            # زر الحذف
-            del_btn = IconRightWidget(
-                icon="delete", 
-                theme_text_color="Custom", 
-                text_color=(0.8, 0, 0, 1),
-                on_release=lambda x, p=prod: self.remove_temp_item(p)
+            # عنصر القائمة
+            item = TwoLineAvatarIconListItem(
+                text=f"{real_number}. {prod_name}",
+                secondary_text=f"Prix: {final_price} DA",
+                theme_text_color="Custom",
+                text_color=(0, 0, 0, 1)
             )
             
-            item_ui.add_widget(del_btn)
-            self.scan_list_widget.add_widget(item_ui)
+            # أيقونة
+            icon_box = IconLeftWidget(icon="cube-outline")
+            item.add_widget(icon_box)
+            
+            # زر الحذف
+            # ملاحظة هامة: نستخدم prod=prod لربط الزر بالمنتج الصحيح
+            del_btn = IconRightWidget(
+                icon="delete",
+                theme_text_color="Custom",
+                text_color=(0.9, 0, 0, 1),
+                on_release=lambda x, p=prod: self.remove_temp_item(p)
+            )
+            item.add_widget(del_btn)
+            
+            self.scan_list_widget.add_widget(item)
 
     def show_not_found_alert(self, code):
         if hasattr(self, 'is_showing_alert') and self.is_showing_alert:
