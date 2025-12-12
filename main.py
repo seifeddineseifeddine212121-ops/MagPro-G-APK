@@ -4159,15 +4159,38 @@ class StockApp(MDApp):
         if count == 0:
             return
 
+        # 1. تحديد فئة الزبون (مرة واحدة لضمان السرعة)
+        customer_cat = 'Détail'
+        if self.selected_entity:
+            raw_cat = str(self.selected_entity.get('category', ''))
+            if raw_cat in ['Gros', 'جملة']:
+                customer_cat = 'Gros'
+            elif raw_cat in ['Demi-Gros', 'نصف جملة']:
+                customer_cat = 'Demi-Gros'
+
+        # 2. عرض القائمة
         for index, prod in enumerate(reversed(self.temp_scanned_cart)):
             real_number = count - index
             prod_name = self.fix_text(prod.get('name', 'Inconnu'))
-            final_price = prod.get('price', 0)
             
-            # عنصر خفيف
+            # --- منطق حساب السعر (بدون تغيير الشكل) ---
+            # نبدأ بالسعر العادي
+            final_price = float(prod.get('price', 0) or 0)
+            
+            # نغير السعر إذا كان الزبون جملة أو نصف جملة
+            if customer_cat == 'Gros':
+                p_gros = float(prod.get('price_wholesale', 0) or 0)
+                if p_gros > 0: # شرط: أن يكون هناك سعر جملة محدد
+                    final_price = p_gros
+            elif customer_cat == 'Demi-Gros':
+                p_semi = float(prod.get('price_semi', 0) or 0)
+                if p_semi > 0:
+                    final_price = p_semi
+            
+            # --- العرض (نفس التصميم السابق تماماً) ---
             item = TwoLineAvatarIconListItem(
                 text=f"[b]{real_number}.[/b] {prod_name}",
-                secondary_text=f"Prix: {final_price} DA",
+                secondary_text=f"Prix: {final_price:.2f} DA", # السعر يتغير حسب الزبون، لكن النص ثابت
                 theme_text_color="Custom",
                 text_color=(0, 0, 0, 1)
             )
@@ -4182,6 +4205,7 @@ class StockApp(MDApp):
                 on_release=lambda x, p=prod: self.remove_temp_item(p)
             )
             item.add_widget(del_btn)
+            
             self.scan_list_widget.add_widget(item)
 
     def show_not_found_alert(self, code):
