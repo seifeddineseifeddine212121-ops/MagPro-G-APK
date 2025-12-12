@@ -3939,11 +3939,12 @@ class StockApp(MDApp):
         self.last_scan_time = 0
         
         try:
-            # --- الحل الجذري للثقل ---
-            # نستخدم دقة 640x480. هي الأسرع على الإطلاق وتزيل التأخير تماماً
-            self.camera_widget = Camera(play=True, index=0, resolution=(640, 480), allow_stretch=True, keep_ratio=False)
+            # --- التغيير الجذري: إزالة الدقة (resolution) ---
+            # ترك الدقة فارغة يجعل الهاتف يختار أفضل دقة مدعومة تلقائياً (يمنع الشاشة السوداء)
+            self.camera_widget = Camera(play=True, index=0, allow_stretch=True, keep_ratio=False)
+            self.camera_widget.size_hint = (1, 1) # ملء الشاشة بالكامل
             
-            # تدوير الكاميرا
+            # تدوير الكاميرا لتناسب وضع البورتريه
             with self.camera_widget.canvas.before:
                 PushMatrix()
                 self.rotation = Rotate(angle=-90, origin=self.camera_widget.center)
@@ -3955,73 +3956,88 @@ class StockApp(MDApp):
             self.notify("Erreur init caméra", "error")
             return
         
-        # --- التخطيط العمودي (Vertical Box) ---
-        root_layout = MDBoxLayout(orientation='vertical', spacing=0, padding=0)
+        # --- التصميم الجديد: نظام الطبقات (Layers) ---
+        # الطبقة 1 (الخلفية): الكاميرا
+        # الطبقة 2 (الأمامية): الواجهة والقائمة
+        root_layout = MDFloatLayout()
         
-        # 1. الجزء العلوي: الكاميرا (40% من الشاشة)
-        # نضعها في FloatLayout لنتحكم في زر الإغلاق فوقها
-        top_container = MDFloatLayout(size_hint_y=0.4)
+        # 1. إضافة الكاميرا في الخلفية
+        root_layout.add_widget(self.camera_widget)
         
-        # إضافة الكاميرا
-        top_container.add_widget(self.camera_widget)
+        # 2. حاوية الواجهة الأمامية (تقسم الشاشة عمودياً)
+        ui_overlay = MDBoxLayout(orientation='vertical', spacing=0)
         
-        # زر إغلاق شفاف فوق الكاميرا
-        close_btn = MDIconButton(
-            icon="close",
-            pos_hint={'top': 0.95, 'right': 0.95},
-            theme_text_color="Custom",
-            text_color=(1, 1, 1, 1),
-            md_bg_color=(0, 0, 0, 0.3),
-            on_release=self.close_barcode_scanner
-        )
-        top_container.add_widget(close_btn)
+        # أ) الجزء العلوي (شفاف - لرؤية الكاميرا)
+        scanner_view = MDFloatLayout(size_hint_y=0.45)
         
-        # خط فاصل أحمر ليعرف المستخدم أين يوجه الباركود
-        scanner_line = MDCard(
-            size_hint=(0.8, None), 
+        # الخط الأحمر
+        red_line = MDCard(
+            size_hint=(0.9, None), 
             height=dp(2), 
-            md_bg_color=(1, 0, 0, 0.8), 
+            md_bg_color=(1, 0, 0, 1), 
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
-        top_container.add_widget(scanner_line)
+        scanner_view.add_widget(red_line)
         
-        root_layout.add_widget(top_container)
+        # زر إغلاق في الزاوية
+        close_btn = MDIconButton(
+            icon="close",
+            icon_size="32sp",
+            md_bg_color=(0, 0, 0, 0.5), # أسود نصف شفاف
+            theme_text_color="Custom",
+            text_color=(1, 1, 1, 1),
+            pos_hint={'top': 0.95, 'right': 0.95},
+            on_release=self.close_barcode_scanner
+        )
+        scanner_view.add_widget(close_btn)
         
-        # 2. الجزء السفلي: القائمة (60% من الشاشة - تأخذ الباقي تلقائياً)
-        bottom_container = MDBoxLayout(orientation='vertical', size_hint_y=0.6, md_bg_color=(1, 1, 1, 1))
+        ui_overlay.add_widget(scanner_view)
+        
+        # ب) الجزء السفلي (القائمة - خلفية بيضاء)
+        # نستخدم Card لعمل حواف دائرية من الأعلى
+        list_container = MDCard(
+            orientation='vertical', 
+            size_hint_y=0.55, 
+            radius=[25, 25, 0, 0], 
+            md_bg_color=(1, 1, 1, 1),
+            elevation=4
+        )
         
         # هيدر القائمة
-        list_header = MDBoxLayout(size_hint_y=None, height=dp(45), padding=[dp(15), 0], md_bg_color=(0.95, 0.95, 0.95, 1))
-        self.lbl_scan_count = MDLabel(text="Articles scannés: 0", font_style="Subtitle1", bold=True, valign='center')
-        list_header.add_widget(self.lbl_scan_count)
-        bottom_container.add_widget(list_header)
+        header_box = MDBoxLayout(size_hint_y=None, height=dp(50), padding=[dp(20), 0])
+        self.lbl_scan_count = MDLabel(text="Articles scannés: 0", bold=True, theme_text_color="Primary", font_style="Subtitle1")
+        header_box.add_widget(self.lbl_scan_count)
+        list_container.add_widget(header_box)
         
         # القائمة
         scroll = MDScrollView()
         self.scan_list_widget = MDList()
         scroll.add_widget(self.scan_list_widget)
-        bottom_container.add_widget(scroll)
+        list_container.add_widget(scroll)
         
-        # زر الإنهاء
-        btn_finish = MDRaisedButton(
+        # زر التأكيد
+        btn_confirm = MDRaisedButton(
             text="CONFIRMER & AJOUTER",
             font_size="18sp",
             size_hint=(1, None),
-            height=dp(55),
+            height=dp(60),
             md_bg_color=(0, 0.7, 0, 1),
             elevation=0,
             on_release=self.finish_continuous_scan
         )
-        bottom_container.add_widget(btn_finish)
+        list_container.add_widget(btn_confirm)
         
-        root_layout.add_widget(bottom_container)
+        ui_overlay.add_widget(list_container)
         
-        # فتح النافذة (Full Screen)
+        # إضافة طبقة الواجهة فوق الكاميرا
+        root_layout.add_widget(ui_overlay)
+        
+        # فتح النافذة
         self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0,0,0,1))
         self.scan_dialog.add_widget(root_layout)
         self.scan_dialog.open()
         
-        # مسح سريع (كل 0.1 ثانية) لأن الدقة منخفضة الآن ويتحملها الجهاز
+        # تشغيل الفحص (تردد سريع لأن الدقة تلقائية)
         self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/10.0)
 
     def close_barcode_scanner(self, *args):
