@@ -3884,7 +3884,9 @@ class StockApp(MDApp):
         close_btn = MDIconButton(
             icon="close", 
             pos_hint={'center_x': .5, 'y': .05}, 
-            user_font_size="48sp",
+            # --- التصحيح هنا: استخدام icon_size بدلاً من user_font_size ---
+            icon_size="48sp", 
+            # -------------------------------------------------------------
             theme_text_color="Custom",
             text_color=(1, 1, 1, 1),
             md_bg_color=(1, 0, 0, 1),
@@ -3904,7 +3906,6 @@ class StockApp(MDApp):
         self.scan_dialog.open()
         
         self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/10.0)
-    # ---------------------------------------------------------
 
     def close_barcode_scanner(self, *args):
         if hasattr(self, 'scan_event') and self.scan_event:
