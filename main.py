@@ -3906,14 +3906,13 @@ class StockApp(MDApp):
             self._launch_camera_widget()
 
     def _launch_camera_widget(self):
-        # تهيئة المتغيرات
         self.temp_scanned_cart = []
         self.last_scan_time = 0
         
         try:
-            # 1. رفع الدقة إلى Full HD (1920x1080)
-            # 2. keep_ratio=False: لإجبار الصورة على ملء الشاشة وإزالة السواد
+            # الكاميرا تأخذ كامل الشاشة 100%
             self.camera_widget = Camera(play=True, index=0, resolution=(1920, 1080), allow_stretch=True, keep_ratio=False)
+            self.camera_widget.size_hint = (1, 1) # ملء الشاشة
             
             # تصحيح الدوران
             with self.camera_widget.canvas.before:
@@ -3927,48 +3926,52 @@ class StockApp(MDApp):
             self.notify("Erreur init caméra", "error")
             return
         
-        # --- التصميم ---
-        root_layout = MDBoxLayout(orientation='vertical', spacing=0, padding=0)
+        # --- استخدام FloatLayout لتركيب العناصر فوق الكاميرا ---
+        root_layout = MDFloatLayout()
         
-        # الهيدر
-        header = MDBoxLayout(size_hint_y=None, height=dp(50), md_bg_color=(0, 0.7, 0, 1), padding=[dp(10), 0])
+        # 1. الطبقة الخلفية: الكاميرا
+        root_layout.add_widget(self.camera_widget)
+        
+        # 2. الطبقة العلوية: الهيدر (شفاف قليلاً)
+        header = MDBoxLayout(size_hint=(1, None), height=dp(60), md_bg_color=(0, 0, 0, 0.5), padding=[dp(15), 0], pos_hint={'top': 1})
         header.add_widget(MDIcon(icon="barcode-scan", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
-        header.add_widget(MDLabel(text="  Mode Scanner", bold=True, theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
-        close_top = MDIconButton(icon="close", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}, on_release=self.close_barcode_scanner)
+        header.add_widget(MDLabel(text="  Scanner", bold=True, font_style="H6", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
+        close_top = MDIconButton(icon="close", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}, icon_size="32sp", on_release=self.close_barcode_scanner)
         header.add_widget(close_top)
         root_layout.add_widget(header)
         
-        # الكاميرا (داخل FloatLayout لتأخذ كل المساحة وتتمدد)
-        cam_wrapper = MDFloatLayout(size_hint_y=1) 
-        cam_wrapper.add_widget(self.camera_widget)
-        root_layout.add_widget(cam_wrapper)
+        # 3. الطبقة السفلية: القائمة (زيادة الطول إلى 320dp)
+        # نستخدم Card بخلفية بيضاء
+        bottom_area = MDCard(orientation='vertical', size_hint=(1, None), height=dp(320), radius=[25, 25, 0, 0], elevation=10, md_bg_color=(1, 1, 1, 0.95), pos_hint={'bottom': 1})
         
-        # المنطقة السفلية
-        bottom_area = MDCard(orientation='vertical', size_hint_y=None, height=dp(250), radius=[20, 20, 0, 0], elevation=4, md_bg_color=(1, 1, 1, 1))
-        
-        list_header = MDBoxLayout(size_hint_y=None, height=dp(30), padding=[dp(20), dp(5)])
-        self.lbl_scan_count = MDLabel(text="Articles scannés: 0", font_style="Caption", bold=True, theme_text_color="Primary")
+        # عنوان القائمة
+        list_header = MDBoxLayout(size_hint_y=None, height=dp(40), padding=[dp(20), dp(10)])
+        self.lbl_scan_count = MDLabel(text="Articles: 0", font_style="Subtitle1", bold=True, theme_text_color="Primary")
         list_header.add_widget(self.lbl_scan_count)
         bottom_area.add_widget(list_header)
         
+        # القائمة القابلة للتمرير
         scroll = MDScrollView(size_hint_y=1)
         self.scan_list_widget = MDList()
         scroll.add_widget(self.scan_list_widget)
         bottom_area.add_widget(scroll)
         
+        # زر الإنهاء
         btn_finish = MDRaisedButton(
-            text="TERMINER & AJOUTER AU PANIER",
-            font_size="18sp",
+            text="AJOUTER AU PANIER",
+            font_size="19sp",
             size_hint=(1, None),
-            height=dp(55),
+            height=dp(60),
             md_bg_color=(0, 0.7, 0, 1),
             elevation=0,
+            radius=[0,0,0,0], # زوايا حادة للأسفل
             on_release=self.finish_continuous_scan
         )
         bottom_area.add_widget(btn_finish)
         
         root_layout.add_widget(bottom_area)
         
+        # فتح النافذة
         self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0,0,0,1))
         self.scan_dialog.add_widget(root_layout)
         self.scan_dialog.open()
@@ -4032,28 +4035,18 @@ class StockApp(MDApp):
                 break
         
         if found_product:
-            # --- التحقق من التكرار ---
-            # نفحص هل المنتج موجود بالفعل في القائمة المؤقتة؟
-            is_duplicate = False
+            # 1. التحقق من التكرار
             for item in self.temp_scanned_cart:
                 if item['id'] == found_product['id']:
-                    is_duplicate = True
-                    break
-            
-            if is_duplicate:
-                # إذا كان مكرراً، نظهر التنبيه ونوقف الإضافة
-                self.show_duplicate_alert(found_product.get('name', 'Produit'))
-                return
-            # ------------------------
+                    self.show_duplicate_alert(found_product.get('name', 'Produit'))
+                    return
 
-            # إضافة للمصفوفة المؤقتة
+            # 2. الإضافة
             self.temp_scanned_cart.append(found_product)
             self.update_scan_list_ui()
-            
-            # صوت تنبيه بسيط (يمكنك تفعيل هذا السطر إذا أردت صوتاً)
-            # os.system('echo -n "\a"') 
         else:
-            self.notify(f"Inconnu: {code}", "error")
+            # 3. المنتج غير موجود (Show Alert)
+            self.show_not_found_alert(code)
 
     def show_duplicate_alert(self, product_name):
         # دالة لإظهار نافذة تنبيه عند تكرار المنتج
@@ -4083,39 +4076,49 @@ class StockApp(MDApp):
         self.dup_dialog.open()
 
     def update_scan_list_ui(self):
-        # إعادة رسم القائمة لتحديث الأرقام
         self.scan_list_widget.clear_widgets()
         count = len(self.temp_scanned_cart)
         self.lbl_scan_count.text = f"Articles scannés: {count}"
         
-        # نعرض القائمة بالعكس (الجديد في الأعلى)
+        # عرض القائمة (الجديد في الأعلى)
         for index, prod in enumerate(reversed(self.temp_scanned_cart)):
-            real_index = count - index # الترتيب الحقيقي (1, 2, 3)
-            
+            real_index = count - index
             prod_name = self.fix_text(prod.get('name', 'Product'))
             price = prod.get('price', 0)
             
-            # عنصر القائمة
-            item_ui = TwoLineAvatarIconListItem(
-                text=f"[b]{real_index}.[/b] {prod_name}",
-                secondary_text=f"Qté: 1 | Prix: {price} DA",
-            )
+            # استخدام عنصر خفيف (OneLine Avatar + Icon)
+            # نقوم بتخصيص النص ليشمل السعر
+            text_content = f"[b]{real_index}.[/b] {prod_name[:25]}.. [color=#008000]({price} DA)[/color]"
             
-            # أيقونة الصندوق على اليسار
-            icon_left = IconLeftWidget(icon="package-variant-closed")
-            item_ui.add_widget(icon_left)
+            item_ui = OneLineListItem(text=text_content, theme_text_color="Custom", text_color=(0.2, 0.2, 0.2, 1))
             
-            # زر الحذف على اليمين (لحذف هذا العنصر تحديداً)
-            # نمرر الـ prod لحذفه
-            icon_del = IconRightWidget(
+            # زر الحذف
+            del_btn = IconRightWidget(
                 icon="delete", 
                 theme_text_color="Custom", 
-                text_color=(0.9, 0, 0, 1),
+                text_color=(0.8, 0, 0, 1),
                 on_release=lambda x, p=prod: self.remove_temp_item(p)
             )
-            item_ui.add_widget(icon_del)
             
+            item_ui.add_widget(del_btn)
             self.scan_list_widget.add_widget(item_ui)
+
+    def show_not_found_alert(self, code):
+        if hasattr(self, 'is_showing_alert') and self.is_showing_alert:
+            return
+        self.is_showing_alert = True
+        
+        def close(*args):
+            self.not_found_dialog.dismiss()
+            self.is_showing_alert = False
+
+        self.not_found_dialog = MDDialog(
+            title="Introuvable !",
+            text=f"Le code-barres:\n[b]{code}[/b]\n\nn'existe pas dans la base de données.",
+            buttons=[MDRaisedButton(text="OK", md_bg_color=(0.2, 0.2, 0.2, 1), on_release=close)],
+            size_hint=(0.85, None)
+        )
+        self.not_found_dialog.open()
 
     def remove_temp_item(self, product_to_remove):
         # دالة لحذف عنصر من القائمة المؤقتة
