@@ -3846,16 +3846,39 @@ class StockApp(MDApp):
 # ---------------------------------------------------------
     # BARCODE SCANNER LOGIC (ANDROID / pyzbar)
     # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # تعديل جديد: طلب الصلاحية قبل فتح الكاميرا
+    # ---------------------------------------------------------
     def open_barcode_scanner(self, instance):
         if not decode:
             self.notify("Erreur: Librairie pyzbar manquante", "error")
             return
-        
-        # حماية ضد أخطاء الكاميرا
+
+        # التحقق: هل نحن على أندرويد؟
+        if platform == 'android':
+            from android.permissions import request_permissions, Permission
+            
+            def on_permission_result(permissions, grants):
+                # إذا وافق المستخدم (True)
+                if grants and grants[0]:
+                    Clock.schedule_once(lambda dt: self._launch_camera_widget(), 0.1)
+                else:
+                    self.notify("Permission Caméra Refusée !", "error")
+            
+            # طلب إذن الكاميرا
+            request_permissions([Permission.CAMERA], on_permission_result)
+        else:
+            # إذا كنا على الكمبيوتر، افتح مباشرة
+            self._launch_camera_widget()
+
+    def _launch_camera_widget(self):
+        # هذه الدالة مسؤولة فقط عن فتح الواجهة والكاميرا
         try:
             self.camera_widget = Camera(play=True, index=0, resolution=(640, 480))
         except Exception as e:
-            self.notify("Erreur Caméra", "error")
+            # طباعة الخطأ في Logcat لمعرفته
+            print(f"[CAMERA ERROR] {e}")
+            self.notify("Erreur Caméra (Init Failed)", "error")
             return
         
         close_btn = MDIconButton(
@@ -3881,6 +3904,7 @@ class StockApp(MDApp):
         self.scan_dialog.open()
         
         self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/10.0)
+    # ---------------------------------------------------------
 
     def close_barcode_scanner(self, *args):
         if hasattr(self, 'scan_event') and self.scan_event:
