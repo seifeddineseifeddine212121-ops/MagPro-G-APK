@@ -39,6 +39,7 @@ try:
 except ImportError:
     decode = None
     print("[WARNING] pyzbar library not found.")
+from kivymd.uix.list import IconRightWidget, IconLeftWidget, TwoLineAvatarIconListItem
 from kivy.uix.modalview import ModalView
 from kivy.graphics.context_instructions import Rotate
 from kivy.graphics.context_instructions import PushMatrix, PopMatrix
@@ -3905,15 +3906,16 @@ class StockApp(MDApp):
             self._launch_camera_widget()
 
     def _launch_camera_widget(self):
-        # تهيئة المتغيرات للمسح المستمر
-        self.temp_scanned_cart = []  # سلة مؤقتة
-        self.last_scan_time = 0      # مؤقت لمنع التكرار السريع
+        # تهيئة المتغيرات
+        self.temp_scanned_cart = []  # قائمة المنتجات الممسوحة
+        self.last_scan_time = 0
         
         try:
-            # إعداد الكاميرا
-            self.camera_widget = Camera(play=True, index=0, resolution=(640, 480), allow_stretch=True, keep_ratio=False)
+            # زيادة الدقة (HD) وتفعيل التمدد لملء الشاشة
+            # 1280x720 هي دقة ممتازة وسريعة على معظم الهواتف
+            self.camera_widget = Camera(play=True, index=0, resolution=(1280, 720), allow_stretch=True, keep_ratio=False)
             
-            # تصحيح دوران الكاميرا
+            # تدوير الكاميرا لتناسب الهاتف
             with self.camera_widget.canvas.before:
                 PushMatrix()
                 self.rotation = Rotate(angle=-90, origin=self.camera_widget.center)
@@ -3925,39 +3927,59 @@ class StockApp(MDApp):
             self.notify("Erreur init caméra", "error")
             return
         
-        # --- تصميم الواجهة الجديدة ---
-        root_layout = MDBoxLayout(orientation='vertical', spacing='5dp', padding=0)
+        # --- التصميم الجديد (Vertical Layout) ---
+        root_layout = MDBoxLayout(orientation='vertical', spacing=0, padding=0)
         
-        # 1. الكاميرا (تأخذ المساحة الأكبر)
-        cam_container = MDFloatLayout(size_hint_y=0.6)
-        cam_container.add_widget(self.camera_widget)
-        root_layout.add_widget(cam_container)
+        # 1. الهيدر العلوي (أخضر)
+        header = MDBoxLayout(size_hint_y=None, height=dp(50), md_bg_color=(0, 0.7, 0, 1), padding=[dp(10), 0])
+        header.add_widget(MDIcon(icon="barcode-scan", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
+        header.add_widget(MDLabel(text="  Mode Scanner", bold=True, theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
+        # زر إغلاق صغير في الأعلى
+        close_top = MDIconButton(icon="close", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}, on_release=self.close_barcode_scanner)
+        header.add_widget(close_top)
+        root_layout.add_widget(header)
         
-        # 2. قائمة المنتجات الممسوحة (مؤقتة)
-        list_label = MDLabel(text="Articles scannés:", size_hint_y=None, height=dp(30), halign="center", bold=True, theme_text_color="Custom", text_color=(1,1,1,1))
-        root_layout.add_widget(list_label)
+        # 2. الكاميرا (تأخذ كل المساحة المتبقية size_hint_y=1)
+        # نضعها داخل FloatLayout لضمان التمدد الصحيح
+        cam_wrapper = MDFloatLayout(size_hint_y=1) 
+        cam_wrapper.add_widget(self.camera_widget)
+        root_layout.add_widget(cam_wrapper)
         
-        scroll = MDScrollView(size_hint_y=0.3, md_bg_color=(0.9, 0.9, 0.9, 1))
+        # 3. منطقة القائمة والأزرار (في الأسفل)
+        bottom_area = MDCard(orientation='vertical', size_hint_y=None, height=dp(250), radius=[20, 20, 0, 0], elevation=4, md_bg_color=(1, 1, 1, 1))
+        
+        # عنوان القائمة
+        list_header = MDBoxLayout(size_hint_y=None, height=dp(30), padding=[dp(20), dp(5)])
+        self.lbl_scan_count = MDLabel(text="Articles scannés: 0", font_style="Caption", bold=True, theme_text_color="Primary")
+        list_header.add_widget(self.lbl_scan_count)
+        bottom_area.add_widget(list_header)
+        
+        # القائمة القابلة للتمرير
+        scroll = MDScrollView(size_hint_y=1)
         self.scan_list_widget = MDList()
         scroll.add_widget(self.scan_list_widget)
-        root_layout.add_widget(scroll)
+        bottom_area.add_widget(scroll)
         
-        # 3. زر الإنهاء (Terminer)
+        # زر الإنهاء الأخضر العريض
         btn_finish = MDRaisedButton(
-            text="TERMINER & AJOUTER",
+            text="TERMINER & AJOUTER AU PANIER",
             font_size="18sp",
-            size_hint=(1, 0.1),
+            size_hint=(1, None),
+            height=dp(55),
             md_bg_color=(0, 0.7, 0, 1),
+            elevation=0,
+            radius=[0,0,0,0],
             on_release=self.finish_continuous_scan
         )
-        root_layout.add_widget(btn_finish)
+        bottom_area.add_widget(btn_finish)
         
-        # فتح النافذة كاملة
-        self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0.1, 0.1, 0.1, 1))
+        root_layout.add_widget(bottom_area)
+        
+        # فتح النافذة
+        self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0,0,0,1))
         self.scan_dialog.add_widget(root_layout)
         self.scan_dialog.open()
         
-        # تشغيل الفحص
         self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/10.0)
 
     def close_barcode_scanner(self, *args):
@@ -4019,17 +4041,53 @@ class StockApp(MDApp):
         if found_product:
             # إضافة للمصفوفة المؤقتة
             self.temp_scanned_cart.append(found_product)
+            self.update_scan_list_ui() # تحديث الواجهة
             
-            # إضافة للقائمة المرئية في شاشة السكانير
-            prod_name = self.fix_text(found_product.get('name', 'Product'))
-            item_ui = OneLineListItem(text=f"✅ {prod_name}")
-            self.scan_list_widget.add_widget(item_ui)
-            
-            # تمرير القائمة للأسفل لرؤية آخر عنصر
-            # self.scan_list_widget.parent.scroll_to(item_ui) 
-            self.notify(f"Scanné: {prod_name}", "success")
+            # صوت تنبيه بسيط (اختياري، اهتزاز الواجهة)
+            # self.notify(f"Scanné: {found_product.get('name')}", "success")
         else:
             self.notify(f"Inconnu: {code}", "error")
+
+    def update_scan_list_ui(self):
+        # إعادة رسم القائمة لتحديث الأرقام
+        self.scan_list_widget.clear_widgets()
+        count = len(self.temp_scanned_cart)
+        self.lbl_scan_count.text = f"Articles scannés: {count}"
+        
+        # نعرض القائمة بالعكس (الجديد في الأعلى)
+        for index, prod in enumerate(reversed(self.temp_scanned_cart)):
+            real_index = count - index # الترتيب الحقيقي (1, 2, 3)
+            
+            prod_name = self.fix_text(prod.get('name', 'Product'))
+            price = prod.get('price', 0)
+            
+            # عنصر القائمة
+            item_ui = TwoLineAvatarIconListItem(
+                text=f"[b]{real_index}.[/b] {prod_name}",
+                secondary_text=f"Qté: 1 | Prix: {price} DA",
+            )
+            
+            # أيقونة الصندوق على اليسار
+            icon_left = IconLeftWidget(icon="package-variant-closed")
+            item_ui.add_widget(icon_left)
+            
+            # زر الحذف على اليمين (لحذف هذا العنصر تحديداً)
+            # نمرر الـ prod لحذفه
+            icon_del = IconRightWidget(
+                icon="delete", 
+                theme_text_color="Custom", 
+                text_color=(0.9, 0, 0, 1),
+                on_release=lambda x, p=prod: self.remove_temp_item(p)
+            )
+            item_ui.add_widget(icon_del)
+            
+            self.scan_list_widget.add_widget(item_ui)
+
+    def remove_temp_item(self, product_to_remove):
+        # دالة لحذف عنصر من القائمة المؤقتة
+        if product_to_remove in self.temp_scanned_cart:
+            self.temp_scanned_cart.remove(product_to_remove)
+            self.update_scan_list_ui() # إعادة الترقيم
 
     def finish_continuous_scan(self, instance):
         # إيقاف الكاميرا أولاً
