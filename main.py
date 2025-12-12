@@ -462,6 +462,27 @@ class StockApp(MDApp):
             print(f'Data Prep Error: {e}')
         self._apply_search_results(rv_data)
 
+    def play_sound(self, type_):
+        # دالة لتشغيل نغمات مختلفة حسب الحالة
+        if platform == 'android' and hasattr(self, 'tone_gen') and self.tone_gen:
+            try:
+                if type_ == 'success':
+                    # نغمة "بيب" قصيرة (نجاح)
+                    # TONE_PROP_BEEP = 24
+                    self.tone_gen.startTone(24, 150)
+                
+                elif type_ == 'error':
+                    # نغمة منخفضة وقوية (خطأ/غير موجود)
+                    # TONE_SUP_ERROR = 97
+                    self.tone_gen.startTone(97, 300)
+                
+                elif type_ == 'duplicate':
+                    # نغمة مزدوجة أو مميزة (مكرر)
+                    # TONE_CDMA_PIP = 29
+                    self.tone_gen.startTone(29, 150)
+            except:
+                pass
+
     def play_beep(self):
         # دالة لتشغيل صوت "بييب" قصير
         if platform == 'android' and hasattr(self, 'tone_gen') and self.tone_gen:
@@ -3939,12 +3960,10 @@ class StockApp(MDApp):
         self.last_scan_time = 0
         
         try:
-            # --- التغيير الجذري: إزالة الدقة (resolution) ---
-            # ترك الدقة فارغة يجعل الهاتف يختار أفضل دقة مدعومة تلقائياً (يمنع الشاشة السوداء)
+            # الكاميرا بدون تحديد دقة (تلقائي) لضمان العمل
             self.camera_widget = Camera(play=True, index=0, allow_stretch=True, keep_ratio=False)
-            self.camera_widget.size_hint = (1, 1) # ملء الشاشة بالكامل
             
-            # تدوير الكاميرا لتناسب وضع البورتريه
+            # تدوير الكاميرا
             with self.camera_widget.canvas.before:
                 PushMatrix()
                 self.rotation = Rotate(angle=-90, origin=self.camera_widget.center)
@@ -3956,55 +3975,45 @@ class StockApp(MDApp):
             self.notify("Erreur init caméra", "error")
             return
         
-        # --- التصميم الجديد: نظام الطبقات (Layers) ---
-        # الطبقة 1 (الخلفية): الكاميرا
-        # الطبقة 2 (الأمامية): الواجهة والقائمة
-        root_layout = MDFloatLayout()
+        # --- التصميم الجديد (Vertical Split) ---
+        # يقسم الشاشة إلى جزئين لا يتداخلان
+        root_layout = MDBoxLayout(orientation='vertical', spacing=0)
         
-        # 1. إضافة الكاميرا في الخلفية
-        root_layout.add_widget(self.camera_widget)
+        # 1. الجزء العلوي: الكاميرا (45% من الشاشة)
+        # استخدام FloatLayout يسمح للكاميرا بالتمدد داخله بالكامل
+        camera_area = MDFloatLayout(size_hint_y=0.45)
         
-        # 2. حاوية الواجهة الأمامية (تقسم الشاشة عمودياً)
-        ui_overlay = MDBoxLayout(orientation='vertical', spacing=0)
+        # نجبر الكاميرا على أخذ حجم هذا الجزء
+        self.camera_widget.size_hint = (1, 1)
+        self.camera_widget.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
+        camera_area.add_widget(self.camera_widget)
         
-        # أ) الجزء العلوي (شفاف - لرؤية الكاميرا)
-        scanner_view = MDFloatLayout(size_hint_y=0.45)
-        
-        # الخط الأحمر
-        red_line = MDCard(
-            size_hint=(0.9, None), 
-            height=dp(2), 
-            md_bg_color=(1, 0, 0, 1), 
-            pos_hint={'center_x': 0.5, 'center_y': 0.5}
-        )
-        scanner_view.add_widget(red_line)
-        
-        # زر إغلاق في الزاوية
+        # زر الإغلاق (فوق الكاميرا)
         close_btn = MDIconButton(
             icon="close",
             icon_size="32sp",
-            md_bg_color=(0, 0, 0, 0.5), # أسود نصف شفاف
+            md_bg_color=(0, 0, 0, 0.4),
             theme_text_color="Custom",
             text_color=(1, 1, 1, 1),
             pos_hint={'top': 0.95, 'right': 0.95},
             on_release=self.close_barcode_scanner
         )
-        scanner_view.add_widget(close_btn)
+        camera_area.add_widget(close_btn)
         
-        ui_overlay.add_widget(scanner_view)
+        # إضافة منطقة الكاميرا للشاشة الرئيسية
+        root_layout.add_widget(camera_area)
         
-        # ب) الجزء السفلي (القائمة - خلفية بيضاء)
-        # نستخدم Card لعمل حواف دائرية من الأعلى
+        # 2. الجزء السفلي: القائمة (55% من الشاشة - الباقي)
         list_container = MDCard(
             orientation='vertical', 
             size_hint_y=0.55, 
-            radius=[25, 25, 0, 0], 
+            radius=[20, 20, 0, 0], # تدوير الزوايا العلوية فقط
             md_bg_color=(1, 1, 1, 1),
-            elevation=4
+            elevation=0
         )
         
         # هيدر القائمة
-        header_box = MDBoxLayout(size_hint_y=None, height=dp(50), padding=[dp(20), 0])
+        header_box = MDBoxLayout(size_hint_y=None, height=dp(45), padding=[dp(20), 0])
         self.lbl_scan_count = MDLabel(text="Articles scannés: 0", bold=True, theme_text_color="Primary", font_style="Subtitle1")
         header_box.add_widget(self.lbl_scan_count)
         list_container.add_widget(header_box)
@@ -4027,17 +4036,14 @@ class StockApp(MDApp):
         )
         list_container.add_widget(btn_confirm)
         
-        ui_overlay.add_widget(list_container)
-        
-        # إضافة طبقة الواجهة فوق الكاميرا
-        root_layout.add_widget(ui_overlay)
+        root_layout.add_widget(list_container)
         
         # فتح النافذة
         self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0,0,0,1))
         self.scan_dialog.add_widget(root_layout)
         self.scan_dialog.open()
         
-        # تشغيل الفحص (تردد سريع لأن الدقة تلقائية)
+        # الفحص
         self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/10.0)
 
     def close_barcode_scanner(self, *args):
@@ -4097,21 +4103,25 @@ class StockApp(MDApp):
                 break
         
         if found_product:
-            # التحقق من التكرار
+            # 1. التحقق من التكرار
             for item in self.temp_scanned_cart:
                 if item['id'] == found_product['id']:
+                    # تشغيل صوت "مكرر"
+                    self.play_sound('duplicate')
                     self.show_duplicate_alert(found_product.get('name', 'Produit'))
                     return
 
-            # إضافة المنتج
+            # 2. الإضافة (نجاح)
             self.temp_scanned_cart.append(found_product)
-            
-            # تحديث الواجهة
             self.update_scan_list_ui()
             
-            # تشغيل الصوت (سيكون سريعاً الآن)
-            self.play_beep()
+            # تشغيل صوت "نجاح"
+            self.play_sound('success')
+            
         else:
+            # 3. غير موجود
+            # تشغيل صوت "خطأ"
+            self.play_sound('error')
             self.show_not_found_alert(code)
 
     def show_duplicate_alert(self, product_name):
@@ -4142,41 +4152,29 @@ class StockApp(MDApp):
         self.dup_dialog.open()
 
     def update_scan_list_ui(self):
-        # 1. تفريغ القائمة الحالية
         self.scan_list_widget.clear_widgets()
-        
-        # 2. تحديث العداد
         count = len(self.temp_scanned_cart)
         self.lbl_scan_count.text = f"Articles scannés: {count}"
         
         if count == 0:
             return
 
-        # 3. إعادة بناء القائمة (عكسياً: الأحدث في الأعلى)
-        # نستخدم reversed لكي يظهر آخر منتج تم مسحه في قمة القائمة
         for index, prod in enumerate(reversed(self.temp_scanned_cart)):
-            # حساب الترتيب الصحيح (1, 2, 3...)
             real_number = count - index
-            
             prod_name = self.fix_text(prod.get('name', 'Inconnu'))
-            # عرض السعر حسب نوع الزبون المختار حالياً
             final_price = prod.get('price', 0)
-            # إذا كنا قد حسبنا السعر مسبقاً في الدالة الأخرى، نستخدمه، وإلا نستخدم السعر الافتراضي
             
-            # عنصر القائمة
+            # عنصر خفيف
             item = TwoLineAvatarIconListItem(
-                text=f"{real_number}. {prod_name}",
+                text=f"[b]{real_number}.[/b] {prod_name}",
                 secondary_text=f"Prix: {final_price} DA",
                 theme_text_color="Custom",
                 text_color=(0, 0, 0, 1)
             )
             
-            # أيقونة
             icon_box = IconLeftWidget(icon="cube-outline")
             item.add_widget(icon_box)
             
-            # زر الحذف
-            # ملاحظة هامة: نستخدم prod=prod لربط الزر بالمنتج الصحيح
             del_btn = IconRightWidget(
                 icon="delete",
                 theme_text_color="Custom",
@@ -4184,7 +4182,6 @@ class StockApp(MDApp):
                 on_release=lambda x, p=prod: self.remove_temp_item(p)
             )
             item.add_widget(del_btn)
-            
             self.scan_list_widget.add_widget(item)
 
     def show_not_found_alert(self, code):
