@@ -3872,28 +3872,28 @@ class StockApp(MDApp):
             self._launch_camera_widget()
 
     def _launch_camera_widget(self):
-        # هذه الدالة مسؤولة فقط عن فتح الواجهة والكاميرا
         try:
-            self.camera_widget = Camera(play=True, index=0, resolution=(640, 480))
+            # 1. إزالة resolution لتجنب المشاكل (تلقائي)
+            # 2. تفعيل allow_stretch لتعبئة الشاشة
+            self.camera_widget = Camera(play=True, index=0, allow_stretch=True, keep_ratio=False)
         except Exception as e:
-            # طباعة الخطأ في Logcat لمعرفته
             print(f"[CAMERA ERROR] {e}")
-            self.notify("Erreur Caméra (Init Failed)", "error")
+            self.notify("Erreur init caméra", "error")
             return
         
+        # زر الإغلاق (تصغير الحجم قليلاً ووضعه في الأسفل)
         close_btn = MDIconButton(
             icon="close", 
-            pos_hint={'center_x': .5, 'y': .05}, 
-            # --- التصحيح هنا: استخدام icon_size بدلاً من user_font_size ---
-            icon_size="48sp", 
-            # -------------------------------------------------------------
+            pos_hint={'center_x': .5, 'y': .02}, 
+            icon_size="32sp",
             theme_text_color="Custom",
             text_color=(1, 1, 1, 1),
             md_bg_color=(1, 0, 0, 1),
             on_release=self.close_barcode_scanner
         )
         
-        content = MDFloatLayout()
+        # 3. تحديد حجم ثابت للحاوية لضمان ظهور الكاميرا
+        content = MDFloatLayout(size_hint_y=None, height=dp(400))
         content.add_widget(self.camera_widget)
         content.add_widget(close_btn)
         
@@ -3901,11 +3901,12 @@ class StockApp(MDApp):
             title="Scan Code-barres",
             type="custom",
             content_cls=content,
-            size_hint=(0.9, 0.6)
+            size_hint=(0.9, None), # العرض 90%
         )
         self.scan_dialog.open()
         
-        self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/10.0)
+        # تقليل سرعة الفحص قليلاً لتخفيف الحمل على الهاتف
+        self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/5.0)
 
     def close_barcode_scanner(self, *args):
         if hasattr(self, 'scan_event') and self.scan_event:
