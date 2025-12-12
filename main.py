@@ -2618,9 +2618,12 @@ class StockApp(MDApp):
             UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/get_next_ref', on_success=on_ref_success)
 
         def save_product(x):
+            # التحقق من الاسم
             if not self.field_name.get_value().strip():
                 self.field_name.error = True
                 return
+            
+            # التحقق من الأرقام
             try:
                 stock_val = -999999999999 if self.chk_unlimited.active else float(self.field_stock.get_value() or 0)
                 cost_val = float(self.field_cost.get_value() or 0)
@@ -2630,11 +2633,28 @@ class StockApp(MDApp):
             except ValueError:
                 self.notify('Valeurs numériques invalides', 'error')
                 return
-            payload = {'name': self.field_name.get_value().strip(), 'product_ref': self.field_num.text.strip(), 'barcode': self.field_bar.text.strip(), 'description': self.field_desc.get_value().strip(), 'stock': stock_val, 'cost': cost_val, 'price': p1_val, 'price_semi': p2_val, 'price_wholesale': p3_val, 'category': '', 'unit': '', 'user_name': self.current_user_name}
+            
+            # تجهيز البيانات
+            payload = {
+                'name': self.field_name.get_value().strip(),
+                'product_ref': self.field_num.text.strip(),
+                'barcode': self.field_bar.text.strip(),
+                'description': self.field_desc.get_value().strip(),
+                'stock': stock_val,
+                'cost': cost_val,
+                'price': p1_val,
+                'price_semi': p2_val,
+                'price_wholesale': p3_val,
+                'category': '',
+                'unit': '',
+                'user_name': self.current_user_name
+            }
+            
             endpoint = '/api/update_product' if is_edit else '/api/add_product'
             if is_edit:
                 payload['id'] = product['id']
 
+            # دالة النجاح
             def on_save_ok(req, res):
                 if self.dialog:
                     self.dialog.dismiss()
@@ -2642,7 +2662,17 @@ class StockApp(MDApp):
                     self.search_field.text = ''
                 self.fetch_products()
                 self.notify(f"Produit {('Modifié' if is_edit else 'Ajouté')} avec succès", 'success')
-            UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}{endpoint}', req_body=json.dumps(payload), req_headers={'Content-Type': 'application/json'}, method='POST', on_save_ok=on_save_ok, on_failure=lambda r, e: self.notify('Erreur serveur', 'error'), on_error=lambda r, e: self.notify('Erreur connexion', 'error'))
+
+            # --- التصحيح هنا: تم تغيير on_save_ok إلى on_success ---
+            UrlRequest(
+                f'http://{self.active_server_ip}:{DEFAULT_PORT}{endpoint}',
+                req_body=json.dumps(payload),
+                req_headers={'Content-Type': 'application/json'},
+                method='POST',
+                on_success=on_save_ok,  # <--- التصحيح
+                on_failure=lambda r, e: self.notify('Erreur serveur', 'error'),
+                on_error=lambda r, e: self.notify('Erreur connexion', 'error')
+            )
 
         def delete_product_flow(x):
             if is_used:
@@ -3875,50 +3905,60 @@ class StockApp(MDApp):
             self._launch_camera_widget()
 
     def _launch_camera_widget(self):
+        # تهيئة المتغيرات للمسح المستمر
+        self.temp_scanned_cart = []  # سلة مؤقتة
+        self.last_scan_time = 0      # مؤقت لمنع التكرار السريع
+        
         try:
             # إعداد الكاميرا
-            # ملاحظة: index=0 هي الخلفية عادة
             self.camera_widget = Camera(play=True, index=0, resolution=(640, 480), allow_stretch=True, keep_ratio=False)
             
-            # تصحيح دوران الكاميرا (لأنها تظهر مقلوبة في الصورة)
-            # نقوم بتدويرها -90 درجة لتناسب وضع الهاتف العمودي
+            # تصحيح دوران الكاميرا
             with self.camera_widget.canvas.before:
                 PushMatrix()
                 self.rotation = Rotate(angle=-90, origin=self.camera_widget.center)
             with self.camera_widget.canvas.after:
                 PopMatrix()
-                
-            # تحديث نقطة الارتكاز للدوران عند تغيير الحجم
             self.camera_widget.bind(center=lambda instance, value: setattr(self.rotation, 'origin', instance.center))
 
         except Exception as e:
-            print(f"[CAMERA ERROR] {e}")
             self.notify("Erreur init caméra", "error")
             return
         
-        # حاوية كاملة الشاشة
-        content = MDFloatLayout()
-        content.add_widget(self.camera_widget)
+        # --- تصميم الواجهة الجديدة ---
+        root_layout = MDBoxLayout(orientation='vertical', spacing='5dp', padding=0)
         
-        # زر إغلاق عائم وكبير في الأسفل
-        close_btn = MDIconButton(
-            icon="close",
-            pos_hint={'center_x': .5, 'y': .05},
-            icon_size="64sp", # حجم كبير
-            theme_text_color="Custom",
-            text_color=(1, 1, 1, 1),
-            md_bg_color=(1, 0, 0, 0.6), # أحمر شفاف قليلاً
-            on_release=self.close_barcode_scanner
+        # 1. الكاميرا (تأخذ المساحة الأكبر)
+        cam_container = MDFloatLayout(size_hint_y=0.6)
+        cam_container.add_widget(self.camera_widget)
+        root_layout.add_widget(cam_container)
+        
+        # 2. قائمة المنتجات الممسوحة (مؤقتة)
+        list_label = MDLabel(text="Articles scannés:", size_hint_y=None, height=dp(30), halign="center", bold=True, theme_text_color="Custom", text_color=(1,1,1,1))
+        root_layout.add_widget(list_label)
+        
+        scroll = MDScrollView(size_hint_y=0.3, md_bg_color=(0.9, 0.9, 0.9, 1))
+        self.scan_list_widget = MDList()
+        scroll.add_widget(self.scan_list_widget)
+        root_layout.add_widget(scroll)
+        
+        # 3. زر الإنهاء (Terminer)
+        btn_finish = MDRaisedButton(
+            text="TERMINER & AJOUTER",
+            font_size="18sp",
+            size_hint=(1, 0.1),
+            md_bg_color=(0, 0.7, 0, 1),
+            on_release=self.finish_continuous_scan
         )
-        content.add_widget(close_btn)
+        root_layout.add_widget(btn_finish)
         
-        # استخدام ModalView بدلاً من MDDialog لفتح شاشة كاملة
-        self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0,0,0,1))
-        self.scan_dialog.add_widget(content)
+        # فتح النافذة كاملة
+        self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0.1, 0.1, 0.1, 1))
+        self.scan_dialog.add_widget(root_layout)
         self.scan_dialog.open()
         
         # تشغيل الفحص
-        self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/5.0)
+        self.scan_event = Clock.schedule_interval(self.detect_barcode_frame, 1.0/10.0)
 
     def close_barcode_scanner(self, *args):
         if hasattr(self, 'scan_event') and self.scan_event:
@@ -3932,29 +3972,81 @@ class StockApp(MDApp):
             self.scan_dialog = None # تفريغ المتغير
 
     def detect_barcode_frame(self, dt):
-        if not decode or not hasattr(self, 'camera_widget') or not self.camera_widget.texture:
+        # التحقق من وجود المكتبات والكاميرا
+        if not hasattr(self, 'camera_widget') or not self.camera_widget.texture:
+            return
+            
+        # التحقق من الفاصل الزمني (Cooldown) - 1.5 ثانية
+        if time.time() - self.last_scan_time < 1.5:
             return
 
         try:
             texture = self.camera_widget.texture
             size = texture.size
             pixels = texture.pixels
-            
             pil_image = PILImage.frombytes(mode='RGBA', size=size, data=pixels)
             
-            # قراءة باستخدام pyzbar
-            barcodes = decode(pil_image)
+            found_code = None
             
-            if barcodes:
-                for barcode in barcodes:
-                    barcode_data = barcode.data.decode("utf-8")
-                    if barcode_data:
-                        print(f"Barcode Found: {barcode_data}")
-                        self.close_barcode_scanner()
-                        self.process_scanned_barcode(barcode_data)
-                        break
+            # كود القراءة (يدعم pyzbar و zxing)
+            if 'pyzbar' in sys.modules and decode:
+                barcodes = decode(pil_image)
+                if barcodes:
+                    found_code = barcodes[0].data.decode("utf-8")
+            elif read_barcodes:
+                results = read_barcodes(pil_image)
+                if results:
+                    found_code = results[0].text
+
+            if found_code:
+                # تحديث وقت آخر مسح
+                self.last_scan_time = time.time()
+                print(f"Barcode Found: {found_code}")
+                # معالجة الكود بدون إغلاق الكاميرا
+                self.process_continuous_scan(found_code)
+
         except Exception as e:
             print(f"Scan Error: {e}")
+
+    def process_continuous_scan(self, code):
+        found_product = None
+        for p in self.all_products_raw:
+            p_code = str(p.get('barcode', '')).strip()
+            if p_code == code:
+                found_product = p
+                break
+        
+        if found_product:
+            # إضافة للمصفوفة المؤقتة
+            self.temp_scanned_cart.append(found_product)
+            
+            # إضافة للقائمة المرئية في شاشة السكانير
+            prod_name = self.fix_text(found_product.get('name', 'Product'))
+            item_ui = OneLineListItem(text=f"✅ {prod_name}")
+            self.scan_list_widget.add_widget(item_ui)
+            
+            # تمرير القائمة للأسفل لرؤية آخر عنصر
+            # self.scan_list_widget.parent.scroll_to(item_ui) 
+            self.notify(f"Scanné: {prod_name}", "success")
+        else:
+            self.notify(f"Inconnu: {code}", "error")
+
+    def finish_continuous_scan(self, instance):
+        # إيقاف الكاميرا أولاً
+        self.close_barcode_scanner()
+        
+        if not self.temp_scanned_cart:
+            return
+
+        count = 0
+        # نقل المنتجات من القائمة المؤقتة للسلة الرئيسية
+        for product in self.temp_scanned_cart:
+            self.add_scanned_item_to_cart(product)
+            count += 1
+            
+        self.notify(f"{count} Articles ajoutés au panier", "success")
+        # تفريغ القائمة المؤقتة
+        self.temp_scanned_cart = []
 
     def process_scanned_barcode(self, code):
         found_product = None
