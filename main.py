@@ -43,6 +43,16 @@ from kivymd.uix.list import IconRightWidget, IconLeftWidget, TwoLineAvatarIconLi
 from kivy.uix.modalview import ModalView
 from kivy.graphics.context_instructions import Rotate
 from kivy.graphics.context_instructions import PushMatrix, PopMatrix
+if platform == 'android':
+    from jnius import autoclass
+    BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+    BluetoothDevice = autoclass('android.bluetooth.BluetoothDevice')
+    UUID = autoclass('java.util.UUID')
+    
+    # --- إضافة: استيراد مولد النغمات ---
+    AudioManager = autoclass('android.media.AudioManager')
+    ToneGenerator = autoclass('android.media.ToneGenerator')
+    # -----------------------------------
 import arabic_reshaper
 import json
 import os
@@ -452,6 +462,15 @@ class StockApp(MDApp):
             print(f'Data Prep Error: {e}')
         self._apply_search_results(rv_data)
 
+    def play_beep(self):
+        # دالة لتشغيل صوت "بييب" قصير
+        if platform == 'android' and hasattr(self, 'tone_gen') and self.tone_gen:
+            try:
+                # TONE_PROP_BEEP = 24, Duration = 150ms
+                self.tone_gen.startTone(24, 150)
+            except:
+                pass
+
     @mainthread
     def _apply_search_results(self, rv_data):
         if self.rv_products:
@@ -805,6 +824,16 @@ class StockApp(MDApp):
     def on_start(self):
         if platform == 'android':
             self.request_android_permissions()
+            
+            # --- إضافة: تهيئة مولد الصوت ---
+            try:
+                # STREAM_MUSIC = 3, Volume = 100 (Max)
+                self.tone_gen = ToneGenerator(3, 100)
+            except Exception as e:
+                print(f"Error init sound: {e}")
+                self.tone_gen = None
+            # -----------------------------
+
         Clock.schedule_once(self._deferred_start, 0.5)
 
     def request_android_permissions(self):
@@ -3910,11 +3939,10 @@ class StockApp(MDApp):
         self.last_scan_time = 0
         
         try:
-            # الكاميرا تأخذ كامل الشاشة 100%
+            # الكاميرا تأخذ كامل الشاشة
             self.camera_widget = Camera(play=True, index=0, resolution=(1920, 1080), allow_stretch=True, keep_ratio=False)
-            self.camera_widget.size_hint = (1, 1) # ملء الشاشة
+            self.camera_widget.size_hint = (1, 1)
             
-            # تصحيح الدوران
             with self.camera_widget.canvas.before:
                 PushMatrix()
                 self.rotation = Rotate(angle=-90, origin=self.camera_widget.center)
@@ -3926,13 +3954,12 @@ class StockApp(MDApp):
             self.notify("Erreur init caméra", "error")
             return
         
-        # --- استخدام FloatLayout لتركيب العناصر فوق الكاميرا ---
         root_layout = MDFloatLayout()
         
-        # 1. الطبقة الخلفية: الكاميرا
+        # 1. الكاميرا
         root_layout.add_widget(self.camera_widget)
         
-        # 2. الطبقة العلوية: الهيدر (شفاف قليلاً)
+        # 2. الهيدر
         header = MDBoxLayout(size_hint=(1, None), height=dp(60), md_bg_color=(0, 0, 0, 0.5), padding=[dp(15), 0], pos_hint={'top': 1})
         header.add_widget(MDIcon(icon="barcode-scan", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
         header.add_widget(MDLabel(text="  Scanner", bold=True, font_style="H6", theme_text_color="Custom", text_color=(1,1,1,1), pos_hint={'center_y': .5}))
@@ -3940,23 +3967,21 @@ class StockApp(MDApp):
         header.add_widget(close_top)
         root_layout.add_widget(header)
         
-        # 3. الطبقة السفلية: القائمة (زيادة الطول إلى 320dp)
-        # نستخدم Card بخلفية بيضاء
-        bottom_area = MDCard(orientation='vertical', size_hint=(1, None), height=dp(320), radius=[25, 25, 0, 0], elevation=10, md_bg_color=(1, 1, 1, 0.95), pos_hint={'bottom': 1})
+        # 3. القائمة السفلية
+        bottom_area = MDCard(orientation='vertical', size_hint=(1, None), height=dp(320), elevation=10, md_bg_color=(1, 1, 1, 0.95), pos_hint={'bottom': 1})
+        # ملاحظة: حذفنا radius من الـ MDCard أيضاً لضمان التوافق، أو يمكنك تركه إذا كان مدعوماً في Card
         
-        # عنوان القائمة
         list_header = MDBoxLayout(size_hint_y=None, height=dp(40), padding=[dp(20), dp(10)])
         self.lbl_scan_count = MDLabel(text="Articles: 0", font_style="Subtitle1", bold=True, theme_text_color="Primary")
         list_header.add_widget(self.lbl_scan_count)
         bottom_area.add_widget(list_header)
         
-        # القائمة القابلة للتمرير
         scroll = MDScrollView(size_hint_y=1)
         self.scan_list_widget = MDList()
         scroll.add_widget(self.scan_list_widget)
         bottom_area.add_widget(scroll)
         
-        # زر الإنهاء
+        # --- التصحيح هنا: حذف سطر radius ---
         btn_finish = MDRaisedButton(
             text="AJOUTER AU PANIER",
             font_size="19sp",
@@ -3964,14 +3989,15 @@ class StockApp(MDApp):
             height=dp(60),
             md_bg_color=(0, 0.7, 0, 1),
             elevation=0,
-            radius=[0,0,0,0], # زوايا حادة للأسفل
+            # radius=[0,0,0,0],  <-- تم الحذف
             on_release=self.finish_continuous_scan
         )
+        # -----------------------------------
+        
         bottom_area.add_widget(btn_finish)
         
         root_layout.add_widget(bottom_area)
         
-        # فتح النافذة
         self.scan_dialog = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0,0,0,1))
         self.scan_dialog.add_widget(root_layout)
         self.scan_dialog.open()
@@ -4038,14 +4064,23 @@ class StockApp(MDApp):
             # 1. التحقق من التكرار
             for item in self.temp_scanned_cart:
                 if item['id'] == found_product['id']:
+                    # صوت خطأ (طويل قليلاً) في حالة التكرار - اختياري
+                    if platform == 'android' and hasattr(self, 'tone_gen') and self.tone_gen:
+                         self.tone_gen.startTone(24, 500) 
+                    
                     self.show_duplicate_alert(found_product.get('name', 'Produit'))
                     return
 
-            # 2. الإضافة
+            # 2. الإضافة والنجاح
             self.temp_scanned_cart.append(found_product)
             self.update_scan_list_ui()
+            
+            # --- إضافة: تشغيل صوت النجاح ---
+            self.play_beep()
+            # -----------------------------
+            
         else:
-            # 3. المنتج غير موجود (Show Alert)
+            # منتج غير موجود
             self.show_not_found_alert(code)
 
     def show_duplicate_alert(self, product_name):
