@@ -4704,11 +4704,10 @@ class StockApp(MDApp):
                 barcodes = decode(pil_image)
                 if barcodes:
                     found_code = barcodes[0].data.decode('utf-8')
-            elif 'read_barcodes' in globals() and globals()['read_barcodes']:
+            elif read_barcodes:
                 results = read_barcodes(pil_image)
                 if results:
                     found_code = results[0].text
-            
             if found_code:
                 self.last_scan_time = time.time()
                 print(f'Barcode Found: {found_code}')
@@ -4717,21 +4716,6 @@ class StockApp(MDApp):
             print(f'Scan Error: {e}')
 
     def process_continuous_scan(self, code):
-        if self.current_mode == 'manage_products':
-            self.close_barcode_scanner()
-            found_product = None
-            for p in self.all_products_raw:
-                p_code = str(p.get('barcode', '')).strip()
-                if p_code == code:
-                    found_product = p
-                    break
-            if found_product:
-                self.show_manage_product_dialog(found_product)
-                self.notify('Mode Édition', 'info')
-            else:
-                self.show_manage_product_dialog(None, prefilled_barcode=code)
-                self.notify('Mode Ajout (Nouveau)', 'info')
-            return
         found_product = None
         for p in self.all_products_raw:
             p_code = str(p.get('barcode', '')).strip()
@@ -4832,20 +4816,6 @@ class StockApp(MDApp):
         self.temp_scanned_cart = []
 
     def process_scanned_barcode(self, code):
-        if self.current_mode == 'manage_products':
-            found_product = None
-            for p in self.all_products_raw:
-                p_code = str(p.get('barcode', '')).strip()
-                if p_code == code:
-                    found_product = p
-                    break
-            if found_product:
-                self.show_manage_product_dialog(found_product)
-                self.notify('Produit trouvé : Édition', 'success')
-            else:
-                self.show_manage_product_dialog(None, prefilled_barcode=code)
-                self.notify('Nouveau code : Ajout', 'info')
-            return
         found_product = None
         for p in self.all_products_raw:
             p_code = str(p.get('barcode', '')).strip()
