@@ -4704,10 +4704,11 @@ class StockApp(MDApp):
                 barcodes = decode(pil_image)
                 if barcodes:
                     found_code = barcodes[0].data.decode('utf-8')
-            elif read_barcodes:
+            elif 'read_barcodes' in globals() and globals()['read_barcodes']:
                 results = read_barcodes(pil_image)
                 if results:
                     found_code = results[0].text
+            
             if found_code:
                 self.last_scan_time = time.time()
                 print(f'Barcode Found: {found_code}')
