@@ -3026,12 +3026,9 @@ class StockApp(MDApp):
         self.dialog = MDDialog(title='', type='custom', content_cls=content, buttons=[], size_hint=(0.85, None))
         self.dialog.open()
 
-    # ==========================================
-    # استبدل دالة show_manage_product_dialog القديمة بهذه الدالة بالكامل
-    # ==========================================
     def show_manage_product_dialog(self, product, prefilled_barcode=None):
-        # تتبع الأخطاء: بداية محاولة التنفيذ
         try:
+            # 1. التحقق من الاتصال
             if not self.is_server_reachable:
                 self.dialog = MDDialog(
                     title='Hors Ligne',
@@ -3041,6 +3038,7 @@ class StockApp(MDApp):
                 self.dialog.open()
                 return
 
+            # 2. منع تعديل منتجات النظام
             if product and product.get('name') == 'Autre Article':
                 self.notify('Modification interdite pour cet article (Système)', 'error')
                 return
@@ -3048,7 +3046,7 @@ class StockApp(MDApp):
             is_edit = product is not None
             title = 'Fiche Produit'
 
-            # تحضير القيم الأولية
+            # 3. تحضير المتغيرات
             val_name = product.get('name', '') if is_edit else ''
             val_ref = product.get('ref', product.get('product_ref', '')) if is_edit else ''
             
@@ -3066,27 +3064,35 @@ class StockApp(MDApp):
                 except:
                     return ''
 
-            raw_stock = float(product.get('stock', 0) or 0) if is_edit else 0
-            is_unlimited = raw_stock <= -900000
-            val_stock = '' if is_unlimited else (str(int(raw_stock)) if raw_stock.is_integer() else str(raw_stock))
+            # تصحيح الخطأ: ضمان أن القيمة float دائماً
+            if is_edit:
+                raw_stock = float(product.get('stock', 0) or 0.0)
+            else:
+                raw_stock = 0.0
             
+            is_unlimited = raw_stock <= -900000
+            
+            if is_unlimited:
+                val_stock = ''
+            else:
+                val_stock = str(int(raw_stock)) if raw_stock.is_integer() else str(raw_stock)
+
             val_cost = fmt(product.get('purchase_price', 0)) if is_edit else ''
             val_p1 = fmt(product.get('price', 0)) if is_edit else ''
             val_p2 = fmt(product.get('price_semi', 0)) if is_edit else ''
             val_p3 = fmt(product.get('price_wholesale', 0)) if is_edit else ''
 
-            # بناء الواجهة
+            # 4. بناء الواجهة
             scroll = MDScrollView(size_hint_y=None, height=dp(500))
             box = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(10), padding=[0, 10, 0, 0])
 
-            # القسم 1: التعريف
+            # القسم الأول: التعريف
             box.add_widget(MDLabel(text='Identification', font_style='Caption', theme_text_color='Primary', bold=True))
             
             row_id = MDBoxLayout(orientation='horizontal', spacing=dp(10), adaptive_height=True)
             self.field_num = MDTextField(text=val_ref, hint_text='Num de Produit', size_hint_x=0.3)
             self.field_bar = MDTextField(text=val_barcode, hint_text='Code-barres', size_hint_x=0.55)
             
-            # زر توليد الباركود
             btn_gen = MDIconButton(
                 icon='barcode',
                 on_release=lambda x: setattr(self.field_bar, 'text', '7' + ''.join([str(random.randint(0, 9)) for _ in range(12)])),
@@ -3105,7 +3111,7 @@ class StockApp(MDApp):
 
             box.add_widget(MDBoxLayout(size_hint_y=None, height=dp(5)))
 
-            # القسم 2: المخزون
+            # القسم الثاني: المخزون
             box.add_widget(MDLabel(text='Stock', font_style='Caption', theme_text_color='Primary', bold=True))
             row_stock_opts = MDBoxLayout(orientation='horizontal', spacing=dp(10), adaptive_height=True)
             
@@ -3120,7 +3126,6 @@ class StockApp(MDApp):
 
             self.field_stock = SmartTextField(text=val_stock, hint_text='Quantité Stock', input_filter='float')
 
-            # دالة التعامل مع الـ Checkbox
             def on_checkbox_active(checkbox, value):
                 try:
                     if value:
@@ -3136,16 +3141,14 @@ class StockApp(MDApp):
                         self.field_stock.text = val_stock
                         self.field_stock.hint_text = 'Quantité Stock'
                         self.field_stock.helper_text = ''
-                except Exception as e:
-                    print(f"Checkbox Error: {e}")
+                except:
+                    pass
 
             self.chk_unlimited.bind(active=on_checkbox_active)
-            # استدعاء أولي لضبط الحالة
             on_checkbox_active(self.chk_unlimited, is_unlimited)
-            
             box.add_widget(self.field_stock)
 
-            # القسم 3: الأسعار
+            # القسم الثالث: التكاليف والأسعار
             box.add_widget(MDLabel(text="Coût d'Achat", font_style='Caption', theme_text_color='Primary', bold=True))
             self.field_cost = SmartTextField(text=val_cost, hint_text='Prix Achat', input_filter='float')
             if is_used:
@@ -3168,34 +3171,27 @@ class StockApp(MDApp):
 
             scroll.add_widget(box)
 
-            # جلب الرقم التالي تلقائياً (إصلاح الـ Thread Issue هنا)
+            # 5. جلب الرقم المرجعي تلقائياً عند الإضافة (مع حماية الـ Thread)
             if not is_edit:
                 @mainthread
-                def on_ref_success(req, res):
-                    try:
-                        if res and 'ref' in res:
-                            self.field_num.text = str(res['ref'])
-                    except Exception as e:
-                        print(f"Ref Error: {e}")
+                def update_ref_ui(req, res):
+                    if res and 'ref' in res:
+                        self.field_num.text = str(res['ref'])
+                
+                UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/get_next_ref', on_success=update_ref_ui)
 
-                UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/get_next_ref', on_success=on_ref_success)
-
-            # دالة الحفظ
+            # 6. دالة الحفظ
             def save_product(x):
                 try:
                     if not self.field_name.get_value().strip():
                         self.field_name.error = True
                         return
 
-                    try:
-                        stock_val = -999999999999 if self.chk_unlimited.active else float(self.field_stock.get_value() or 0)
-                        cost_val = float(self.field_cost.get_value() or 0)
-                        p1_val = float(self.field_p1.get_value() or 0)
-                        p2_val = float(self.field_p2.get_value() or 0)
-                        p3_val = float(self.field_p3.get_value() or 0)
-                    except ValueError:
-                        self.notify('Valeurs numériques invalides', 'error')
-                        return
+                    stock_val = -999999999999 if self.chk_unlimited.active else float(self.field_stock.get_value() or 0.0)
+                    cost_val = float(self.field_cost.get_value() or 0.0)
+                    p1_val = float(self.field_p1.get_value() or 0.0)
+                    p2_val = float(self.field_p2.get_value() or 0.0)
+                    p3_val = float(self.field_p3.get_value() or 0.0)
 
                     payload = {
                         'name': self.field_name.get_value().strip(),
@@ -3224,24 +3220,21 @@ class StockApp(MDApp):
                         self.fetch_products()
                         self.notify(f"Produit {('Modifié' if is_edit else 'Ajouté')} avec succès", 'success')
 
-                    def on_save_err(req, err):
-                        self.notify(f'Erreur: {err}', 'error')
-
                     UrlRequest(
                         f'http://{self.active_server_ip}:{DEFAULT_PORT}{endpoint}',
                         req_body=json.dumps(payload),
                         req_headers={'Content-Type': 'application/json'},
                         method='POST',
                         on_success=on_save_ok,
-                        on_failure=on_save_err,
-                        on_error=on_save_err
+                        on_failure=lambda r, e: self.notify('Erreur serveur', 'error'),
+                        on_error=lambda r, e: self.notify('Erreur connexion', 'error')
                     )
+                except ValueError:
+                    self.notify('Valeurs numériques invalides', 'error')
                 except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    self.notify(f"Erreur Sauvegarde: {e}", 'error')
+                    self.notify(f"Erreur: {e}", 'error')
 
-            # دالة الحذف
+            # 7. دالة الحذف
             def delete_product_flow(x):
                 if is_used:
                     self.notify('Impossible: Produit utilisé', 'error')
@@ -3279,7 +3272,7 @@ class StockApp(MDApp):
                 )
                 self.conf_diag.open()
 
-            # الأزرار السفلية
+            # 8. الأزرار والعرض
             btns = [MDFlatButton(text='FERMER', on_release=lambda x: self.dialog.dismiss())]
             if is_edit:
                 btns.append(MDFlatButton(text='SUPPRIMER', theme_text_color='Error', on_release=delete_product_flow))
@@ -3294,11 +3287,7 @@ class StockApp(MDApp):
             self.dialog.open()
 
         except Exception as e:
-            # هذا الجزء سيكشف لك سبب الخروج في رسالة Toast داخل التطبيق
-            import traceback
-            traceback.print_exc()
-            self.notify(f"CRASH ERROR: {str(e)}", 'error')
-            print(f"CRASH DETAIL: {traceback.format_exc()}")
+            self.notify(f"Erreur UI: {e}", 'error')
 
     def add_to_cart(self, product):
         try:
