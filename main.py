@@ -1,23 +1,3 @@
-import arabic_reshaper
-import json
-import math
-import os
-import random
-import re
-import socket
-import sys
-import textwrap
-import threading
-import time
-# ==========================================
-DEBUG = True
-if DEBUG:
-    os.environ['KIVY_LOG_LEVEL'] = 'info'
-    os.environ['KIVY_NO_CONSOLELOG'] = '0'
-else:
-    os.environ['KIVY_LOG_LEVEL'] = 'error'
-    os.environ['KIVY_NO_CONSOLELOG'] = '1'
-# ==========================================
 from PIL import Image, ImageDraw, ImageFont
 from bidi.algorithm import get_display
 from datetime import datetime, timedelta
@@ -25,7 +5,8 @@ from kivy.clock import Clock, mainthread
 from kivy.config import Config
 from kivy.core.text import LabelBase
 from kivy.core.window import Window
-from kivy.graphics.context_instructions import PushMatrix, PopMatrix, Rotate
+from kivy.graphics.context_instructions import PushMatrix, PopMatrix
+from kivy.graphics.context_instructions import Rotate
 from kivy.lang import Builder
 from kivy.metrics import dp
 from kivy.network.urlrequest import UrlRequest
@@ -46,7 +27,8 @@ from kivymd.uix.dialog import MDDialog
 from kivymd.uix.floatlayout import MDFloatLayout
 from kivymd.uix.gridlayout import MDGridLayout
 from kivymd.uix.label import MDLabel, MDIcon
-from kivymd.uix.list import MDList, OneLineListItem, TwoLineAvatarIconListItem, ThreeLineAvatarIconListItem, IconLeftWidget, IconRightWidget, IRightBodyTouch, ILeftBody
+from kivymd.uix.list import IconRightWidget, IconLeftWidget, TwoLineAvatarIconListItem
+from kivymd.uix.list import OneLineListItem, TwoLineAvatarIconListItem, IconLeftWidget, IconRightWidget, MDList, ThreeLineAvatarIconListItem, IRightBodyTouch, ILeftBody
 from kivymd.uix.pickers import MDDatePicker
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.screenmanager import MDScreenManager
@@ -55,52 +37,47 @@ from kivymd.uix.selectioncontrol import MDCheckbox
 from kivymd.uix.spinner import MDSpinner
 from kivymd.uix.textfield import MDTextField
 from kivymd.uix.toolbar import MDTopAppBar
-# ==========================================
-if DEBUG:
-    Config.set('kivy', 'log_level', 'info')
-    Config.set('kivy', 'log_enable', 1)
-else:
-    Config.set('kivy', 'log_level', 'error')
-    Config.set('kivy', 'log_enable', 0)
-Config.write()
+import arabic_reshaper
+import json
+import os
+import random
+import re
+import socket
+import sys
+import textwrap
+import threading
+import time
 try:
     from pyzbar.pyzbar import decode
     from PIL import Image as PILImage
 except ImportError:
     decode = None
-    if DEBUG:
-        print('[WARNING] pyzbar library not found. Barcode scanning will be disabled.')
-    else:
-        pass
-# ==========================================
+    print('[WARNING] pyzbar library not found.')
 if platform == 'android':
-    try:
-        from jnius import autoclass
-        BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-        BluetoothDevice = autoclass('android.bluetooth.BluetoothDevice')
-        UUID = autoclass('java.util.UUID')
-        AudioManager = autoclass('android.media.AudioManager')
-        ToneGenerator = autoclass('android.media.ToneGenerator')
-    except Exception as e:
-        if DEBUG:
-            print(f'[ERROR] Android libraries failed to load: {e}')
-        else:
-            pass
+    from jnius import autoclass
+    BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+    BluetoothDevice = autoclass('android.bluetooth.BluetoothDevice')
+    UUID = autoclass('java.util.UUID')
+    AudioManager = autoclass('android.media.AudioManager')
+    ToneGenerator = autoclass('android.media.ToneGenerator')
+if platform == 'android':
+    from jnius import autoclass
+    BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+    BluetoothDevice = autoclass('android.bluetooth.BluetoothDevice')
+    UUID = autoclass('java.util.UUID')
 app_dir = os.path.dirname(os.path.abspath(__file__))
 FONT_FILE = os.path.join(app_dir, 'font.ttf')
 custom_font_loaded = False
-# ==========================================
 try:
     if os.path.exists(FONT_FILE) and os.path.isfile(FONT_FILE):
-        if DEBUG:
-            print(f'[INFO] Found custom font at: {FONT_FILE}')
+        print(f'[INFO] Found custom font at: {FONT_FILE}')
         LabelBase.register(name='ArabicFont', fn_regular=FONT_FILE, fn_bold=FONT_FILE)
         LabelBase.register(name='Roboto', fn_regular=FONT_FILE, fn_bold=FONT_FILE)
         LabelBase.register(name='RobotoMedium', fn_regular=FONT_FILE, fn_bold=FONT_FILE)
         LabelBase.register(name='RobotoBold', fn_regular=FONT_FILE, fn_bold=FONT_FILE)
         custom_font_loaded = True
-    elif DEBUG:
-        print('[WARNING] Custom font file NOT found. Using fallback.')
+    else:
+        print('[WARNING] Custom font file NOT found.')
 except Exception as e:
     print(f'[ERROR] Critical error loading custom font: {e}')
 if not custom_font_loaded:
@@ -110,13 +87,9 @@ if not custom_font_loaded:
         LabelBase.register(name='ArabicFont', fn_regular=fallback_regular, fn_bold=fallback_bold)
     except Exception:
         LabelBase.register(name='ArabicFont', fn_regular=None, fn_bold=None)
-# ==========================================
 reshaper = arabic_reshaper.ArabicReshaper(configuration={'delete_harakat': True, 'support_ligatures': True, 'use_unshaped_instead_of_isolated': True})
-# ==========================================
 DEFAULT_PORT = '5000'
-# ==========================================
-KV_BUILDER = '\n<LeftButtonsContainer>:\n    adaptive_width: True\n    spacing: "4dp"\n    padding: "4dp"\n    pos_hint: {"center_y": .5}\n\n<RightButtonsContainer>:\n    adaptive_width: True\n    spacing: "8dp"\n    pos_hint: {"center_y": .5}\n\n<CustomHistoryItem>:\n    orientation: "horizontal"\n    size_hint_y: None\n    height: dp(80)\n    padding: dp(10)\n    spacing: dp(5)\n    radius: [10]\n    elevation: 1\n    ripple_behavior: True\n    md_bg_color: root.bg_color\n    on_release: root.on_tap_action()\n    \n    MDIcon:\n        icon: root.icon\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        pos_hint: {"center_y": .5}\n        font_size: "32sp"\n        size_hint_x: None\n        width: dp(40)\n        \n    MDBoxLayout:\n        orientation: "vertical"\n        pos_hint: {"center_y": .5}\n        spacing: dp(4)\n        size_hint_x: 0.5\n        \n        MDLabel:\n            text: root.text\n            bold: True\n            font_style: "Subtitle1"\n            font_size: "16sp"\n            theme_text_color: "Primary"\n            shorten: True\n            shorten_from: \'right\'\n            font_name: \'ArabicFont\'\n            markup: True\n            \n        MDLabel:\n            text: root.secondary_text\n            font_style: "Caption"\n            theme_text_color: "Secondary"\n            font_name: \'ArabicFont\'\n            \n    MDLabel:\n        text: root.right_text\n        halign: "right"\n        pos_hint: {"center_y": .5}\n        font_style: "Subtitle2"\n        bold: True\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        size_hint_x: 0.3\n        font_name: \'ArabicFont\'\n\n    MDIconButton:\n        icon: "pencil"\n        theme_text_color: "Custom"\n        text_color: (0, 0.5, 0.8, 1)\n        pos_hint: {"center_y": .5}\n        on_release: root.on_edit_action()\n\n<ProductRecycleItem>:\n    orientation: \'vertical\'\n    size_hint_y: None\n    height: dp(90)\n    padding: 0\n    spacing: 0\n    \n    MDCard:\n        orientation: \'horizontal\'\n        padding: dp(10)\n        spacing: dp(10)\n        radius: [8]\n        elevation: 1\n        ripple_behavior: True\n        on_release: root.on_tap()\n        md_bg_color: (1, 1, 1, 1)\n        \n        MDIcon:\n            icon: root.icon_name\n            theme_text_color: "Custom"\n            text_color: root.icon_color\n            size_hint_x: None\n            width: dp(40)\n            pos_hint: {\'center_y\': .5}\n            font_size: \'32sp\'\n\n        MDBoxLayout:\n            orientation: \'vertical\'\n            pos_hint: {\'center_y\': .5}\n            spacing: dp(5)\n            \n            MDLabel:\n                text: root.text_name\n                font_style: "Subtitle1"\n                bold: True\n                text_size: self.width, None\n                max_lines: 2\n                halign: \'left\'\n                font_size: \'17sp\'\n                theme_text_color: "Custom"\n                text_color: (0.1, 0.1, 0.1, 1)\n                font_name: \'ArabicFont\'\n            \n            MDBoxLayout:\n                orientation: \'horizontal\'\n                spacing: dp(10)\n                \n                MDLabel:\n                    text: root.text_price\n                    font_style: "H6"\n                    theme_text_color: "Custom"\n                    text_color: root.price_color\n                    bold: True\n                    size_hint_x: 0.6\n                    font_size: \'20sp\'\n                    font_name: \'ArabicFont\'\n                \n                MDLabel:\n                    text: root.text_stock\n                    theme_text_color: "Custom"\n                    text_color: (0.1, 0.1, 0.1, 1)\n                    halign: \'right\'\n                    size_hint_x: 0.4\n                    bold: True\n                    font_size: \'16sp\'\n                    font_name: \'ArabicFont\'\n\n<ProductRecycleView>:\n    viewclass: \'ProductRecycleItem\'\n    RecycleBoxLayout:\n        default_size: None, dp(95)\n        default_size_hint: 1, None\n        size_hint_y: None\n        height: self.minimum_height\n        orientation: \'vertical\'\n        spacing: dp(4)\n        padding: dp(5)\n\n<HistoryRecycleItem>:\n    orientation: "horizontal"\n    size_hint_y: None\n    height: dp(80)\n    padding: dp(10)\n    spacing: dp(5)\n    radius: [10]\n    elevation: 1\n    ripple_behavior: True\n    md_bg_color: root.bg_color\n    on_release: root.on_tap()\n\n    MDIcon:\n        icon: root.icon_name\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        pos_hint: {"center_y": .5}\n        font_size: "32sp"\n        size_hint_x: None\n        width: dp(40)\n\n    MDBoxLayout:\n        orientation: "vertical"\n        pos_hint: {"center_y": .5}\n        spacing: dp(4)\n        size_hint_x: 1\n\n        MDLabel:\n            text: root.text_primary\n            bold: True\n            font_style: "Subtitle1"\n            font_size: "16sp"\n            theme_text_color: "Primary"\n            text_size: self.width, None\n            halign: \'left\'\n            font_name: \'ArabicFont\'\n            markup: True\n\n        MDLabel:\n            text: root.text_secondary\n            font_style: "Caption"\n            theme_text_color: "Secondary"\n            font_name: \'ArabicFont\'\n\n    MDLabel:\n        text: root.text_amount\n        halign: "right"\n        pos_hint: {"center_y": .5}\n        font_style: "Subtitle2"\n        bold: True\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        size_hint_x: None\n        width: dp(110)\n        font_name: \'ArabicFont\'\n\n<HistoryRecycleView>:\n    viewclass: \'HistoryRecycleItem\'\n    RecycleBoxLayout:\n        default_size: None, dp(85)\n        default_size_hint: 1, None\n        size_hint_y: None\n        height: self.minimum_height\n        orientation: \'vertical\'\n        spacing: dp(5)\n        padding: dp(5)\n\n<EntityRecycleItem>:\n    orientation: "horizontal"\n    size_hint_y: None\n    height: dp(80)\n    padding: dp(10)\n    spacing: dp(15)\n    ripple_behavior: True\n    md_bg_color: (1, 1, 1, 1)\n    radius: [0]\n    on_release: root.on_tap()\n\n    MDIcon:\n        icon: root.icon_name\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        pos_hint: {"center_y": .5}\n        font_size: "32sp"\n        size_hint_x: None\n        width: dp(40)\n\n    MDBoxLayout:\n        orientation: "vertical"\n        pos_hint: {"center_y": .5}\n        size_hint_x: 1\n        spacing: dp(4)\n\n        MDLabel:\n            text: root.text_name\n            bold: True\n            font_style: "Subtitle1"\n            font_name: \'ArabicFont\'\n            theme_text_color: "Custom"\n            text_color: (0.1, 0.1, 0.1, 1)\n            shorten: True\n            shorten_from: \'right\'\n            valign: \'center\'\n\n        MDLabel:\n            text: root.text_balance\n            font_style: "Caption"\n            font_name: \'ArabicFont\'\n            markup: True\n            theme_text_color: "Secondary"\n            valign: \'top\'\n\n<EntityRecycleView>:\n    viewclass: \'EntityRecycleItem\'\n    RecycleBoxLayout:\n        default_size: None, dp(80)\n        default_size_hint: 1, None\n        size_hint_y: None\n        height: self.minimum_height\n        orientation: \'vertical\'\n        spacing: dp(2)\n        padding: dp(0)\n\n<MgmtEntityRecycleItem>:\n    orientation: "horizontal"\n    size_hint_y: None\n    height: dp(80)\n    padding: dp(10)\n    spacing: dp(5)\n    ripple_behavior: True\n    md_bg_color: (1, 1, 1, 1)\n    on_release: root.on_pay()\n\n    MDIcon:\n        icon: "account-circle"\n        theme_text_color: "Custom"\n        text_color: (0.5, 0.5, 0.5, 1)\n        pos_hint: {"center_y": .5}\n        font_size: "32sp"\n        size_hint_x: None\n        width: dp(40)\n\n    MDBoxLayout:\n        orientation: "vertical"\n        pos_hint: {"center_y": .5}\n        size_hint_x: 1\n        spacing: dp(2)\n        padding: [dp(10), 0, 0, 0]\n\n        MDLabel:\n            text: root.text_name\n            bold: True\n            font_style: "Subtitle1"\n            font_name: \'ArabicFont\'\n            theme_text_color: "Custom"\n            text_color: (0.1, 0.1, 0.1, 1)\n            shorten: True\n            shorten_from: \'right\'\n            halign: "left"\n\n        MDLabel:\n            text: root.text_balance\n            font_style: "Caption"\n            font_name: \'ArabicFont\'\n            markup: True\n            theme_text_color: "Secondary"\n            halign: "left"\n\n    MDIconButton:\n        icon: "clock-time-eight-outline"\n        theme_text_color: "Custom"\n        text_color: (0, 0.5, 0.5, 1)\n        pos_hint: {"center_y": .5}\n        on_release: root.on_history()\n\n<MgmtEntityRecycleView>:\n    viewclass: \'MgmtEntityRecycleItem\'\n    RecycleBoxLayout:\n        default_size: None, dp(80)\n        default_size_hint: 1, None\n        size_hint_y: None\n        height: self.minimum_height\n        orientation: \'vertical\'\n        spacing: dp(2)\n        padding: dp(0)\n'
-# ==========================================
+KV_BUILDER = '\n<LeftButtonsContainer>:\n    adaptive_width: True\n    spacing: "4dp"\n    padding: "4dp"\n    pos_hint: {"center_y": .5}\n\n<RightButtonsContainer>:\n    adaptive_width: True\n    spacing: "8dp"\n    pos_hint: {"center_y": .5}\n\n<CustomHistoryItem>:\n    orientation: "horizontal"\n    size_hint_y: None\n    height: dp(80)\n    padding: dp(10)\n    spacing: dp(5)\n    radius: [10]\n    elevation: 1\n    ripple_behavior: True\n    md_bg_color: root.bg_color\n    on_release: root.on_tap_action()\n    \n    MDIcon:\n        icon: root.icon\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        pos_hint: {"center_y": .5}\n        font_size: "32sp"\n        size_hint_x: None\n        width: dp(40)\n        \n    MDBoxLayout:\n        orientation: "vertical"\n        pos_hint: {"center_y": .5}\n        spacing: dp(4)\n        size_hint_x: 0.5\n        \n        MDLabel:\n            text: root.text\n            bold: True\n            font_style: "Subtitle1"\n            font_size: "16sp"\n            theme_text_color: "Primary"\n            shorten: True\n            shorten_from: \'right\'\n            font_name: \'ArabicFont\'\n            markup: True\n            \n        MDLabel:\n            text: root.secondary_text\n            font_style: "Caption"\n            theme_text_color: "Secondary"\n            font_name: \'ArabicFont\'\n            \n    MDLabel:\n        text: root.right_text\n        halign: "right"\n        pos_hint: {"center_y": .5}\n        font_style: "Subtitle2"\n        bold: True\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        size_hint_x: 0.3\n        font_name: \'ArabicFont\'\n\n    MDIconButton:\n        icon: "pencil"\n        theme_text_color: "Custom"\n        text_color: (0, 0.5, 0.8, 1)\n        pos_hint: {"center_y": .5}\n        on_release: root.on_edit_action()\n\n<ProductRecycleItem>:\n    orientation: \'vertical\'\n    size_hint_y: None\n    height: dp(90)\n    padding: 0\n    spacing: 0\n    \n    MDCard:\n        orientation: \'horizontal\'\n        padding: dp(10)\n        spacing: dp(10)\n        radius: [8]\n        elevation: 1\n        ripple_behavior: True\n        on_release: root.on_tap()\n        md_bg_color: (1, 1, 1, 1)\n        \n        MDIcon:\n            icon: root.icon_name\n            theme_text_color: "Custom"\n            text_color: root.icon_color\n            size_hint_x: None\n            width: dp(40)\n            pos_hint: {\'center_y\': .5}\n            font_size: \'32sp\'\n\n        MDBoxLayout:\n            orientation: \'vertical\'\n            pos_hint: {\'center_y\': .5}\n            spacing: dp(5)\n            \n            MDLabel:\n                text: root.text_name\n                font_style: "Subtitle1"\n                bold: True\n                shorten: True\n                shorten_from: \'right\'\n                font_size: \'17sp\'\n                theme_text_color: "Custom"\n                text_color: (0.1, 0.1, 0.1, 1)\n                font_name: \'ArabicFont\'\n            \n            MDBoxLayout:\n                orientation: \'horizontal\'\n                spacing: dp(10)\n                \n                MDLabel:\n                    text: root.text_price\n                    font_style: "H6"\n                    theme_text_color: "Custom"\n                    text_color: root.price_color\n                    bold: True\n                    size_hint_x: 0.6\n                    font_size: \'20sp\'\n                    font_name: \'ArabicFont\'\n                \n                MDLabel:\n                    text: root.text_stock\n                    theme_text_color: "Custom"\n                    text_color: (0.1, 0.1, 0.1, 1)\n                    halign: \'right\'\n                    size_hint_x: 0.4\n                    bold: True\n                    font_size: \'16sp\'\n                    font_name: \'ArabicFont\'\n\n<ProductRecycleView>:\n    viewclass: \'ProductRecycleItem\'\n    RecycleBoxLayout:\n        default_size: None, dp(95)\n        default_size_hint: 1, None\n        size_hint_y: None\n        height: self.minimum_height\n        orientation: \'vertical\'\n        spacing: dp(4)\n        padding: dp(5)\n\n<HistoryRecycleItem>:\n    orientation: "horizontal"\n    size_hint_y: None\n    height: dp(80)\n    padding: dp(10)\n    spacing: dp(5)\n    radius: [10]\n    elevation: 1\n    ripple_behavior: True\n    md_bg_color: root.bg_color\n    on_release: root.on_tap()\n\n    MDIcon:\n        icon: root.icon_name\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        pos_hint: {"center_y": .5}\n        font_size: "32sp"\n        size_hint_x: None\n        width: dp(40)\n\n    MDBoxLayout:\n        orientation: "vertical"\n        pos_hint: {"center_y": .5}\n        spacing: dp(4)\n        size_hint_x: 1\n\n        MDLabel:\n            text: root.text_primary\n            bold: True\n            font_style: "Subtitle1"\n            font_size: "16sp"\n            theme_text_color: "Primary"\n            text_size: self.width, None\n            halign: \'left\'\n            font_name: \'ArabicFont\'\n            markup: True\n\n        MDLabel:\n            text: root.text_secondary\n            font_style: "Caption"\n            theme_text_color: "Secondary"\n            font_name: \'ArabicFont\'\n\n    MDLabel:\n        text: root.text_amount\n        halign: "right"\n        pos_hint: {"center_y": .5}\n        font_style: "Subtitle2"\n        bold: True\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        size_hint_x: None\n        width: dp(110)\n        font_name: \'ArabicFont\'\n\n<HistoryRecycleView>:\n    viewclass: \'HistoryRecycleItem\'\n    RecycleBoxLayout:\n        default_size: None, dp(85)\n        default_size_hint: 1, None\n        size_hint_y: None\n        height: self.minimum_height\n        orientation: \'vertical\'\n        spacing: dp(5)\n        padding: dp(5)\n\n<EntityRecycleItem>:\n    orientation: "horizontal"\n    size_hint_y: None\n    height: dp(80)\n    padding: dp(10)\n    spacing: dp(15)\n    ripple_behavior: True\n    md_bg_color: (1, 1, 1, 1)\n    radius: [0]\n    on_release: root.on_tap()\n\n    MDIcon:\n        icon: root.icon_name\n        theme_text_color: "Custom"\n        text_color: root.icon_color\n        pos_hint: {"center_y": .5}\n        font_size: "32sp"\n        size_hint_x: None\n        width: dp(40)\n\n    MDBoxLayout:\n        orientation: "vertical"\n        pos_hint: {"center_y": .5}\n        size_hint_x: 1\n        spacing: dp(4)\n\n        MDLabel:\n            text: root.text_name\n            bold: True\n            font_style: "Subtitle1"\n            font_name: \'ArabicFont\'\n            theme_text_color: "Custom"\n            text_color: (0.1, 0.1, 0.1, 1)\n            shorten: True\n            shorten_from: \'right\'\n            valign: \'center\'\n\n        MDLabel:\n            text: root.text_balance\n            font_style: "Caption"\n            font_name: \'ArabicFont\'\n            markup: True\n            theme_text_color: "Secondary"\n            valign: \'top\'\n\n<EntityRecycleView>:\n    viewclass: \'EntityRecycleItem\'\n    RecycleBoxLayout:\n        default_size: None, dp(80)\n        default_size_hint: 1, None\n        size_hint_y: None\n        height: self.minimum_height\n        orientation: \'vertical\'\n        spacing: dp(2)\n        padding: dp(0)\n\n<MgmtEntityRecycleItem>:\n    orientation: "horizontal"\n    size_hint_y: None\n    height: dp(80)\n    padding: dp(10)\n    spacing: dp(5)\n    ripple_behavior: True\n    md_bg_color: (1, 1, 1, 1)\n    on_release: root.on_pay()\n\n    MDIcon:\n        icon: "account-circle"\n        theme_text_color: "Custom"\n        text_color: (0.5, 0.5, 0.5, 1)\n        pos_hint: {"center_y": .5}\n        font_size: "32sp"\n        size_hint_x: None\n        width: dp(40)\n\n    MDBoxLayout:\n        orientation: "vertical"\n        pos_hint: {"center_y": .5}\n        size_hint_x: 1\n        spacing: dp(2)\n        padding: [dp(10), 0, 0, 0]\n\n        MDLabel:\n            text: root.text_name\n            bold: True\n            font_style: "Subtitle1"\n            font_name: \'ArabicFont\'\n            theme_text_color: "Custom"\n            text_color: (0.1, 0.1, 0.1, 1)\n            shorten: True\n            shorten_from: \'right\'\n            halign: "left"\n\n        MDLabel:\n            text: root.text_balance\n            font_style: "Caption"\n            font_name: \'ArabicFont\'\n            markup: True\n            theme_text_color: "Secondary"\n            halign: "left"\n\n    MDIconButton:\n        icon: "clock-time-eight-outline"\n        theme_text_color: "Custom"\n        text_color: (0, 0.5, 0.5, 1)\n        pos_hint: {"center_y": .5}\n        on_release: root.on_history()\n\n<MgmtEntityRecycleView>:\n    viewclass: \'MgmtEntityRecycleItem\'\n    RecycleBoxLayout:\n        default_size: None, dp(80)\n        default_size_hint: 1, None\n        size_hint_y: None\n        height: self.minimum_height\n        orientation: \'vertical\'\n        spacing: dp(2)\n        padding: dp(0)\n'
 
 class NoMenuTextField(MDTextField):
 
@@ -429,27 +402,25 @@ class StockApp(MDApp):
         self.current_page_offset = 0
         self.is_loading_more = False
         if self.rv_products:
-            if not self.rv_products.data:
-                self.rv_products.refresh_from_data()
-        self.load_more_products(reset=True)
+            self.rv_products.data = []
+            self.rv_products.refresh_from_data()
+        self.load_more_products()
 
-    def load_more_products(self, reset=False):
-        if self.is_loading_more and (not reset):
+    def load_more_products(self):
+        if self.is_loading_more:
             return
         total_items = len(self.current_product_list_source)
-        if self.current_page_offset >= total_items and (not reset):
+        if self.current_page_offset >= total_items:
             return
         self.is_loading_more = True
-        if reset:
-            self.current_page_offset = 0
         start = self.current_page_offset
         end = start + self.batch_size
         if end > total_items:
             end = total_items
         batch_to_load = self.current_product_list_source[start:end]
-        threading.Thread(target=self._process_batch_data, args=(batch_to_load, reset), daemon=True).start()
+        threading.Thread(target=self._process_batch_data, args=(batch_to_load,), daemon=True).start()
 
-    def _process_batch_data(self, batch, reset=False):
+    def _process_batch_data(self, batch):
         rv_data = []
         is_sale = self.current_mode in ['sale', 'return_sale', 'invoice_sale', 'proforma']
         is_transfer = self.current_mode == 'transfer'
@@ -467,12 +438,9 @@ class StockApp(MDApp):
                 s_store = float(p.get('stock', 0) or 0)
                 s_wh = float(p.get('stock_warehouse', 0) or 0)
                 total_stock = s_store + s_wh
-                if is_transfer and total_stock < -900000:
-                    continue
                 price_fmt = ''
                 price_color = [0, 0, 0, 1]
                 stock_text = ''
-                has_promo = p.get('has_promo', False)
                 if is_transfer:
                     price_fmt = f'Qnt Tot: {fmt_qty(total_stock)}'
                     price_color = [0.2, 0.2, 0.8, 1]
@@ -481,11 +449,7 @@ class StockApp(MDApp):
                     if is_sale:
                         price = float(p.get('price', 0) or 0)
                         price_fmt = f'{price:.2f} DA'
-                        if has_promo:
-                            price_color = [0.5, 0, 0.5, 1]
-                            price_fmt = f'PROMO: {price:.2f} DA'
-                        else:
-                            price_color = [0, 0.6, 0, 1]
+                        price_color = [0, 0.6, 0, 1]
                     else:
                         p_price = p.get('purchase_price', 0)
                         if p_price is None:
@@ -500,26 +464,20 @@ class StockApp(MDApp):
                     else:
                         stock_text = f'Qté: {fmt_qty(s_store)} | Dép: {fmt_qty(s_wh)}'
                 icon = 'package-variant' if total_stock > 0 or total_stock < -900000 else 'package-variant-closed'
-                if has_promo and is_sale:
-                    icon = 'sale'
                 icon_col = [0, 0.6, 0, 1] if total_stock > 0 or total_stock < -900000 else [0.8, 0, 0, 1]
                 raw_name = str(p.get('name', 'Inconnu'))
                 display_name = self.fix_text(raw_name)
                 rv_data.append({'name': display_name, 'price_text': price_fmt, 'stock_text': stock_text, 'icon': icon, 'icon_color': icon_col, 'price_color': price_color, 'raw_data': p})
         except Exception as e:
             print(f'Batch Process Error: {e}')
-        self._append_to_rv(rv_data, reset)
+        self._append_to_rv(rv_data)
 
     @mainthread
-    def _append_to_rv(self, new_data, reset=False):
+    def _append_to_rv(self, new_data):
         if self.rv_products:
-            if reset:
-                self.rv_products.data = new_data
-                self.current_page_offset = len(new_data)
-            else:
-                self.rv_products.data.extend(new_data)
-                self.current_page_offset += len(new_data)
+            self.rv_products.data.extend(new_data)
             self.rv_products.refresh_from_data()
+            self.current_page_offset += len(new_data)
         self.is_loading_more = False
 
     def _search_worker(self, query):
@@ -567,8 +525,6 @@ class StockApp(MDApp):
                 s_store = float(p.get('stock', 0) or 0)
                 s_wh = float(p.get('stock_warehouse', 0) or 0)
                 total_stock = s_store + s_wh
-                if is_transfer and total_stock < -900000:
-                    continue
                 price_fmt = ''
                 price_color = [0, 0, 0, 1]
                 stock_text = ''
@@ -674,53 +630,51 @@ class StockApp(MDApp):
         self.notify('Imprimante effacée', 'info')
 
     def print_ticket_bluetooth(self, transaction_data):
+        if platform != 'android':
+            return
+        if not self.store.exists('printer_config'):
+            self.notify('Imprimante non configurée', 'error')
+            return
+        config = self.store.get('printer_config')
+        target_mac = config.get('mac', '').strip()
+        if not target_mac:
+            return
+        socket = None
         try:
+            adapter = BluetoothAdapter.getDefaultAdapter()
+            if not adapter or not adapter.isEnabled():
+                self.notify('Bluetooth OFF', 'error')
+                return
+            device = adapter.getRemoteDevice(target_mac)
+            uuid = UUID.fromString('00001101-0000-1000-8000-00805F9B34FB')
             img = self.create_receipt_image(transaction_data)
-            from kivy.clock import mainthread
-
-            @mainthread
-            def show_preview(pil_image):
-                try:
-                    from kivy.uix.modalview import ModalView
-                    from kivy.uix.image import Image as KivyImage
-                    from kivy.core.image import Image as CoreImage
-                    from kivy.uix.button import Button
-                    from kivy.uix.boxlayout import BoxLayout
-                    from kivy.uix.scrollview import ScrollView
-                    import io
-                    data = io.BytesIO()
-                    pil_image.save(data, format='png')
-                    data.seek(0)
-                    core_img = CoreImage(io.BytesIO(data.read()), ext='png')
-                    view = ModalView(size_hint=(1, 1), auto_dismiss=False, background_color=(0, 0, 0, 0.9))
-                    layout = BoxLayout(orientation='vertical', padding='5dp', spacing='5dp')
-                    scroll = ScrollView(size_hint=(1, 1), do_scroll_x=False, do_scroll_y=True)
-                    image_widget = KivyImage(texture=core_img.texture, allow_stretch=True, keep_ratio=True, size_hint_y=None, size_hint_x=1)
-                    img_ratio = pil_image.height / pil_image.width
-
-                    def update_image_height(instance, width):
-                        instance.height = width * img_ratio
-                    image_widget.bind(width=update_image_height)
-                    scroll.add_widget(image_widget)
-                    button_text = 'FERMER'
-                    try:
-                        reshaped_text = reshaper.reshape(button_text)
-                        bidi_text = get_display(reshaped_text)
-                    except:
-                        bidi_text = button_text
-                    btn_close = Button(text=bidi_text, size_hint_y=None, height='60dp', background_color=(0.8, 0, 0, 1), font_name='ArabicFont', font_size='20sp')
-                    btn_close.bind(on_release=view.dismiss)
-                    layout.add_widget(scroll)
-                    layout.add_widget(btn_close)
-                    view.add_widget(layout)
-                    view.open()
-                    Clock.schedule_once(lambda dt: update_image_height(image_widget, image_widget.width), 0.1)
-                except Exception as inner_e:
-                    print(f'UI Error: {inner_e}')
-            show_preview(img)
+            raster_data = self.get_image_raster_data(img)
+            socket = device.createRfcommSocketToServiceRecord(uuid)
+            socket.connect()
+            output_stream = socket.getOutputStream()
+            ESC = b'\x1b'
+            GS = b'\x1d'
+            INIT = ESC + b'@'
+            CUT = GS + b'V\x00'
+            output_stream.write(INIT)
+            time.sleep(0.1)
+            chunk_size = 1024
+            for i in range(0, len(raster_data), chunk_size):
+                output_stream.write(raster_data[i:i + chunk_size])
+                output_stream.flush()
+                time.sleep(0.02)
+            output_stream.write(b'\n\n\n')
+            output_stream.write(CUT)
+            output_stream.flush()
+            time.sleep(0.1)
+            socket.close()
         except Exception as e:
-            self.notify(f'Error: {e}', 'error')
-        return
+            try:
+                if socket:
+                    socket.close()
+            except:
+                pass
+            print(f'Print Image Error: {e}')
 
     def get_wrapped_text(self, text, font, max_width):
         lines = []
@@ -770,7 +724,7 @@ class StockApp(MDApp):
                 return ''
             try:
                 text = str(text)
-                reshaped_text = reshaper.reshape(text)
+                reshaped_text = arabic_reshaper.reshape(text)
                 bidi_text = get_display(reshaped_text)
                 return bidi_text
             except:
@@ -808,57 +762,6 @@ class StockApp(MDApp):
                 draw.text((margin + 1, y_pos), l, font=font, fill=(0, 0, 0))
                 draw.text((x_r + 1, y_pos), r, font=font, fill=(0, 0, 0))
             return max(bbox_r[3] - bbox_r[1], bbox_l[3] - bbox_l[1], 30) + 8
-
-        def calculate_timbre_local(amount):
-            try:
-                val = float(amount)
-            except:
-                return 0.0
-            if val <= 300:
-                return 0.0
-            import math
-            units = math.ceil(val / 100.0)
-            if val <= 30000:
-                duty = units * 1.0
-            elif val <= 100000:
-                duty = units * 1.5
-            else:
-                duty = units * 2.0
-            return max(5.0, math.ceil(duty))
-        doc_type_raw = str(transaction_data.get('doc_type', '')).strip()
-        items = transaction_data.get('items', [])
-        try:
-            amount_val = float(transaction_data.get('amount', 0))
-        except:
-            amount_val = 0.0
-        is_simple = transaction_data.get('is_simple_payment', False)
-        if doc_type_raw in ['Ve', 'Cr', 'Re', 'Vr', 'Dr'] or (not items and amount_val != 0):
-            is_simple = True
-        is_supplier = False
-        if doc_type_raw in ['BA', 'FF', 'RF', 'DP', 'BI']:
-            is_supplier = True
-        if is_simple:
-            pay_type = transaction_data.get('type', '')
-            desc_text = str(transaction_data.get('desc', '')).lower()
-            if pay_type == 'supplier_pay':
-                is_supplier = True
-            elif 'règlement' in desc_text or 'reglement' in desc_text or 'supplier' in desc_text:
-                is_supplier = True
-        if is_simple:
-            if amount_val < 0:
-                if is_supplier:
-                    doc_title = 'REGLEMENT'
-                else:
-                    doc_title = 'VERSEMENT'
-            else:
-                doc_title = 'CREDIT'
-        else:
-            labels = {'BV': 'BON DE VENTE', 'BA': "BON D'ACHAT", 'FC': 'FACTURE', 'FF': 'FACTURE ACHAT', 'RC': 'RETOUR CLIENT', 'RF': 'RETOUR FOURN.', 'TR': 'TRANSFERT', 'FP': 'PROFORMA', 'DP': 'COMMANDE', 'BI': 'BON INITIAL'}
-            doc_title = labels.get(doc_type_raw, doc_type_raw)
-            if doc_title == 'Ve':
-                doc_title = 'VERSEMENT'
-            if doc_title == 'Cr':
-                doc_title = 'CREDIT'
         y = 10
         store_name = 'MagPro Store'
         store_address = ''
@@ -875,151 +778,93 @@ class StockApp(MDApp):
             y = draw_text_line(f'Tel: {store_phone}', y, font_reg, 'center')
         y += 5
         y = draw_separator(y)
-        y = draw_text_line(doc_title, y, font_large, 'center')
-        y += 5
-        y = draw_separator(y)
-        ref_text = ''
-        if transaction_data.get('invoice_number'):
-            ref_text = str(transaction_data.get('invoice_number'))
-        elif transaction_data.get('description'):
-            ref_text = str(transaction_data.get('description'))
-        elif transaction_data.get('desc'):
-            ref_text = str(transaction_data.get('desc'))
-        elif transaction_data.get('server_id'):
-            ref_text = str(transaction_data.get('server_id'))
-        elif transaction_data.get('id'):
-            ref_text = str(transaction_data.get('id'))
-        if not is_simple and ref_text and (ref_text != 'None'):
-            y = draw_text_line(f'Bon N°: {ref_text}', y, font_med, 'left')
         ts_str = transaction_data.get('timestamp', '')
         if not ts_str:
             ts_str = datetime.now().strftime('%Y-%m-%d %H:%M')
         else:
-            ts_str = str(ts_str)[:16]
+            ts_str = ts_str[:16]
         user_str = transaction_data.get('user_name', self.current_user_name)
-        entity_name_raw = None
-        if transaction_data.get('entity_name'):
-            entity_name_raw = transaction_data.get('entity_name')
-        elif transaction_data.get('entity'):
-            entity_name_raw = transaction_data.get('entity')
-        if not entity_name_raw and transaction_data.get('entity_id'):
-            ent_id = transaction_data.get('entity_id')
-            found = next((c for c in self.all_clients if str(c['id']) == str(ent_id)), None)
+        entity_name_raw = 'Passager'
+        ent_id = transaction_data.get('entity_id')
+        if self.selected_entity:
+            entity_name_raw = self.selected_entity.get('name', 'Passager')
+        elif ent_id:
+            found = next((c for c in self.all_clients if c['id'] == ent_id), None)
             if not found:
-                found = next((s for s in self.all_suppliers if str(s['id']) == str(ent_id)), None)
+                found = next((s for s in self.all_suppliers if s['id'] == ent_id), None)
             if found:
-                entity_name_raw = found.get('name')
-        if not entity_name_raw:
-            entity_name_raw = 'Passager'
+                entity_name_raw = found.get('name', 'Client')
+            else:
+                entity_name_raw = transaction_data.get('entity', 'Inconnu')
+        doc_type = transaction_data.get('doc_type', 'BV')
+        is_simple = transaction_data.get('is_simple_payment', False)
+        doc_title = ''
+        if is_simple:
+            pay_type = transaction_data.get('type', '')
+            amt = float(transaction_data.get('amount', 0))
+            custom_lbl = transaction_data.get('custom_label')
+            if custom_lbl:
+                doc_title = custom_lbl
+            elif amt < 0:
+                doc_title = 'BON DE CREDIT' if pay_type == 'client_pay' else 'DETTE'
+            else:
+                doc_title = 'VERSEMENT' if pay_type == 'client_pay' else 'REGLEMENT'
+        else:
+            labels = {'BV': 'BON DE VENTE', 'BA': "BON D'ACHAT", 'FC': 'FACTURE', 'FF': 'FACTURE ACHAT', 'RC': 'RETOUR', 'RF': 'RETOUR FOURN.', 'TR': 'TRANSFERT', 'FP': 'PROFORMA', 'DP': 'COMMANDE', 'BI': 'BON INITIAL'}
+            doc_title = labels.get(doc_type, doc_type)
+        y = draw_text_line(doc_title, y, font_large, 'center')
+        y += 10
+        y = draw_separator(y)
+        ref_num = transaction_data.get('invoice_number') or transaction_data.get('server_id')
+        if ref_num:
+            y = draw_text_line(f'Ref: {ref_num}', y, font_reg, 'left')
         y = draw_text_line(f'Date: {ts_str}', y, font_reg, 'left')
         y = draw_text_line(f'User: {user_str}', y, font_reg, 'left')
-        if doc_type_raw == 'TR':
-            clean_name = str(entity_name_raw)
-            clean_name = clean_name.replace('Mag', 'Magasin').replace('Dép', 'Dépôt').replace('Dep', 'Dépôt')
-            if 'Magasin' in clean_name and 'Dépôt' in clean_name:
-                if clean_name.find('Magasin') < clean_name.find('Dépôt'):
-                    clean_name = 'Magasin -> Dépôt'
-                else:
-                    clean_name = 'Dépôt -> Magasin'
-            else:
-                clean_name = clean_name.replace('➔', ' -> ').replace('[]', ' -> ')
-            y = draw_text_line(clean_name, y, font_med, 'left')
-        else:
-            label_entity = 'Fournisseur' if is_supplier else 'Client'
-            y = draw_text_line(f'{label_entity}: {entity_name_raw}', y, font_med, 'left')
+        y = draw_text_line(f'Client: {entity_name_raw}', y, font_med, 'left')
         y += 5
         y = draw_separator(y)
         if is_simple:
+            amount = abs(float(transaction_data.get('amount', 0)))
             y += 20
-            y = draw_text_line('MONTANT', y, font_large, 'center')
-            abs_amount = abs(amount_val)
-            y = draw_text_line(f'{abs_amount:.2f} DA', y, font_large, 'center')
+            y = draw_text_line(f'MONTANT: {amount:.2f} DA', y, font_large, 'center')
             y += 20
-            y += 50
-            final_image = image.crop((0, 0, PAPER_WIDTH, y))
-            return final_image
         else:
-            calc_total_ht = 0.0
-            calc_total_tva = 0.0
+            items = transaction_data.get('items', [])
+            total = 0
             for item in items:
                 raw_prod = item.get('name', 'Article')
                 qty = float(item.get('qty', 0))
                 price = float(item.get('price', 0))
-                tva_rate = float(item.get('tva', 0))
+                row_total = qty * price
+                total += row_total
                 prod_lines = self.get_wrapped_text(raw_prod, font_bold, PAPER_WIDTH - 2 * margin)
                 for line in prod_lines:
                     y = draw_text_line(line, y, font_bold, 'right')
                 qty_str = str(int(qty)) if qty.is_integer() else str(qty)
-                if doc_type_raw == 'TR':
-                    qty_display = f'Qté : {qty_str}'
-                    y = draw_text_line(qty_display, y, font_large, 'center', color=(0, 0, 0))
-                    draw.line([(margin + 50, y - 2), (PAPER_WIDTH - margin - 50, y - 2)], fill=(200, 200, 200), width=1)
-                    y += 10
-                    continue
-                price_str = f'{price:.2f} DA'
-                line_ht = self._round_num(qty * price)
-                line_tva = self._round_num(line_ht * (tva_rate / 100.0))
-                line_ttc = line_ht + line_tva
-                calc_total_ht += line_ht
-                calc_total_tva += line_tva
-                if tva_rate > 0:
-                    line_calc = f'{qty_str} x {price_str} (TVA {int(tva_rate)}%)'
-                else:
-                    line_calc = f'{qty_str} x {price_str}'
-                line_total = f'= {line_ttc:.2f} DA'
+                price_str = f'{price:.2f}'
+                total_str = f'{row_total:.2f}'
+                line_calc = f'{qty_str} x {price_str}'
+                line_total = f'= {total_str} DA'
                 y += draw_lr(line_calc, line_total, font_reg, y)
                 draw.line([(margin + 50, y - 2), (PAPER_WIDTH - margin - 50, y - 2)], fill=(200, 200, 200), width=1)
                 y += 5
             y += 10
             y = draw_separator(y)
-            if doc_type_raw != 'TR':
-                payment_info = transaction_data.get('payment_info', {})
-                saved_paid = 0.0
-                if 'amount' in payment_info:
-                    try:
-                        saved_paid = float(payment_info['amount'])
-                    except:
-                        pass
-                elif 'paid_amount' in transaction_data:
-                    try:
-                        saved_paid = float(transaction_data['paid_amount'])
-                    except:
-                        pass
-                pay_method = transaction_data.get('payment_method', '')
-                if not pay_method and 'method' in payment_info:
-                    pay_method = payment_info.get('method')
-                is_cash = False
-                pm_str = str(pay_method).lower()
-                if pay_method and any((k in pm_str for k in ['espèce', 'espece', 'نقد', 'cash', 'دفع نقدًا'])):
-                    is_cash = True
-                saved_timbre = float(payment_info.get('timbre', 0))
-                final_timbre = 0.0
-                if doc_type_raw == 'FC' and is_cash:
-                    if saved_timbre > 0:
-                        final_timbre = saved_timbre
-                    else:
-                        base = calc_total_ht + calc_total_tva
-                        final_timbre = calculate_timbre_local(base)
-                total_net = calc_total_ht + calc_total_tva + final_timbre
-                if calc_total_tva > 0:
-                    y += draw_lr('Total HT:', f'{calc_total_ht:.2f} DA', font_med, y)
-                    y += draw_lr('Total TVA:', f'{calc_total_tva:.2f} DA', font_med, y)
-                if final_timbre > 0:
-                    y += draw_lr('Droit Timbre:', f'{final_timbre:.2f} DA', font_med, y)
-                if calc_total_tva > 0 or final_timbre > 0:
-                    y += 5
-                    draw.line([(margin, y), (PAPER_WIDTH - margin, y)], fill=(0, 0, 0), width=1)
-                    y += 5
+            if doc_type != 'TR':
                 y += 10
-                y += draw_lr('TOTAL NET:', f'{total_net:.2f} DA', font_large, y, True)
+                y += draw_lr('TOTAL:', f'{total:.2f} DA', font_large, y, True)
                 y += 10
-                reste = self._round_num(total_net - saved_paid)
-                if reste > 0.05:
-                    y += draw_lr('VERSEMENT:', f'{saved_paid:.2f} DA', font_med, y)
-                    y += draw_lr('RESTE:', f'{abs(reste):.2f} DA', font_med, y, True)
-            y += 50
-            final_image = image.crop((0, 0, PAPER_WIDTH, y))
-            return final_image
+                payment = transaction_data.get('payment_info', {})
+                paid = float(payment.get('amount', 0))
+                y += draw_lr('VERSEMENT:', f'{paid:.2f} DA', font_med, y)
+                reste = total - paid
+                label_reste = 'RESTE' if reste >= 0 else 'RENDU'
+                y += draw_lr(f'{label_reste}:', f'{abs(reste):.2f} DA', font_med, y, True)
+        y += 30
+        y = draw_text_line('Merci de votre visite', y, font_reg, 'center')
+        y += 50
+        final_image = image.crop((0, 0, PAPER_WIDTH, y))
+        return final_image
 
     def get_image_raster_data(self, image):
         max_width = 576
@@ -1037,25 +882,6 @@ class StockApp(MDApp):
         raw_bytes = image.tobytes()
         inverted_bytes = bytearray([b ^ 255 for b in raw_bytes])
         return cmd + inverted_bytes
-
-    def _round_num(self, value):
-        try:
-            return round(float(value), 2)
-        except (ValueError, TypeError):
-            return 0.0
-
-    def calculate_cart_totals(self, cart_items, is_invoice_mode):
-        total_ht = 0.0
-        total_tva = 0.0
-        for item in cart_items:
-            p = float(item.get('price', 0) or 0)
-            q = float(item.get('qty', 0) or 0)
-            t_rate = float(item.get('tva', 0) or 0) if is_invoice_mode else 0.0
-            line_ht = self._round_num(p * q)
-            line_tva = self._round_num(line_ht * (t_rate / 100.0))
-            total_ht += line_ht
-            total_tva += line_tva
-        return (self._round_num(total_ht), self._round_num(total_tva))
 
     def build(self):
         Builder.load_string(KV_BUILDER)
@@ -1267,61 +1093,48 @@ class StockApp(MDApp):
                 self.rv_entity_history.data = rv_data
                 return
             target_name = self.history_target_entity['name'].lower()
-            main_doc_prefixes = ['BV', 'BA', 'FC', 'FF', 'RC', 'RF', 'FP', 'DP', 'BI', 'TR']
+            doc_markers = ['BV', 'BA', 'FC', 'FF', 'RC', 'RF', 'FP', 'BL', 'TR']
             for item in result:
                 server_entity_name = str(item.get('entity', '')).lower()
-                if target_name not in server_entity_name:
-                    continue
-                desc = item.get('desc', '')
-                prefix = desc[:2].upper() if len(desc) >= 2 else ''
-                amount = float(item.get('amount', 0))
-                time_str = item.get('time', '')
-                is_main_doc = prefix in main_doc_prefixes
-                icon = 'file-document'
-                color = (0.2, 0.2, 0.2, 1)
-                amount_text = f'{abs(amount):.2f} DA'
-                bg_color = (0.98, 0.98, 0.98, 1)
-                final_desc = desc
-                if not is_main_doc:
-                    if amount < 0:
-                        desc_lower = desc.lower()
-                        is_supplier_pay = 'règlement' in desc_lower or 'reglement' in desc_lower or 'supplier' in desc_lower
-                        if is_supplier_pay:
-                            icon = 'cash-refund'
-                            color = (1, 0.6, 0, 1)
-                            amount_text = f'+ {abs(amount):.2f} DA'
-                            user_name = item.get('user', '')
-                            final_desc = f'Règlement ({user_name})'
+                if target_name in server_entity_name:
+                    desc = item.get('desc', '')
+                    desc_lower = desc.lower()
+                    prefix = desc[:2].upper()
+                    is_credit = any((kw in desc_lower for kw in ['crédit', 'dette', 'solde', 'دين']))
+                    is_payment = any((kw in desc_lower for kw in ['versement', 'règlement', 'encaissement', 'pay', 'دفعة', 'تسديد']))
+                    is_financial = is_credit or is_payment
+                    has_doc_ref = any((marker in desc for marker in doc_markers))
+                    if is_financial and has_doc_ref and (not is_credit):
+                        continue
+                    amount = float(item.get('amount', 0))
+                    time_str = item.get('time', '')
+                    icon = 'file-document'
+                    color = (0.2, 0.2, 0.2, 1)
+                    amount_text = f'{abs(amount):.2f} DA'
+                    if is_financial:
+                        if is_credit:
+                            icon = 'notebook-edit'
+                            color = (0.8, 0, 0, 1)
+                            amount_text = f'- {abs(amount):.2f} DA'
                         else:
                             icon = 'cash-plus'
                             color = (0, 0.7, 0, 1)
                             amount_text = f'+ {abs(amount):.2f} DA'
-                            if 'versement' in desc_lower:
-                                final_desc = desc
-                            else:
-                                final_desc = f'Versement ({desc})'
-                    else:
-                        icon = 'notebook-edit'
+                    elif prefix == 'BV':
+                        icon = 'cart'
+                        color = (0, 0.5, 0.8, 1)
+                    elif prefix == 'BA':
+                        icon = 'truck'
+                        color = (1, 0.6, 0, 1)
+                    elif prefix == 'FC':
+                        icon = 'file-document'
+                        color = (0, 0, 0.8, 1)
+                    elif prefix == 'RC':
+                        icon = 'keyboard-return'
                         color = (0.8, 0, 0, 1)
-                        amount_text = f'- {abs(amount):.2f} DA'
-                        if 'crédit' in desc.lower() or 'dette' in desc.lower():
-                            final_desc = desc
-                        else:
-                            final_desc = f'Crédit ({desc})'
-                elif prefix == 'BV':
-                    icon = 'cart'
-                    color = (0, 0.5, 0.8, 1)
-                elif prefix == 'BA':
-                    icon = 'truck'
-                    color = (1, 0.6, 0, 1)
-                elif prefix == 'FC':
-                    icon = 'file-document'
-                    color = (0, 0, 0.8, 1)
-                elif prefix == 'RC':
-                    icon = 'keyboard-return'
-                    color = (0.8, 0, 0, 1)
-                final_sec = f"{time_str} • {item.get('user', '')}"
-                rv_data.append({'raw_text': final_desc, 'raw_sec': final_sec, 'amount_text': amount_text, 'icon': icon, 'icon_color': color, 'bg_color': bg_color, 'is_local': False, 'raw_data': item, 'key': ''})
+                    final_desc = f'{desc}'
+                    final_sec = f"{time_str} • {item.get('user', '')}"
+                    rv_data.append({'raw_text': final_desc, 'raw_sec': final_sec, 'amount_text': amount_text, 'icon': icon, 'icon_color': color, 'bg_color': (0.98, 0.98, 0.98, 1), 'is_local': False, 'raw_data': item, 'key': ''})
             if not rv_data:
                 rv_data.append({'raw_text': 'Aucune transaction (filtrée).', 'raw_sec': '', 'amount_text': '', 'icon': 'filter-outline', 'icon_color': [0.5, 0.5, 0.5, 1], 'bg_color': [1, 1, 1, 1], 'is_local': False, 'raw_data': None})
             self.rv_entity_history.data = rv_data
@@ -1362,8 +1175,6 @@ class StockApp(MDApp):
                 header_data['location'] = res.get('location')
             if res.get('source_location'):
                 header_data['source_location'] = res.get('source_location')
-            if res.get('payment_method'):
-                header_data['payment_method'] = res.get('payment_method')
             if hasattr(self, 'history_target_entity') and self.history_target_entity:
                 header_data['entity_id'] = self.history_target_entity['id']
                 header_data['entity'] = self.history_target_entity['name']
@@ -1423,25 +1234,18 @@ class StockApp(MDApp):
             return
         if self.simple_pay_dialog:
             self.simple_pay_dialog.dismiss()
-        base_type = 'client_pay'
         if self.current_mode in ['client_payment', 'client_pay']:
-            base_type = 'client_pay'
             self.stat_client_payments += amount
         elif self.current_mode in ['supplier_payment', 'supplier_pay']:
-            base_type = 'supplier_pay'
             self.stat_supplier_payments += amount
         self.calculate_net_total()
         self.save_local_stats()
-        custom_note = ''
-        if base_type == 'supplier_pay':
-            if amount >= 0:
-                custom_note = 'Règlement'
-            else:
-                custom_note = 'Crédit'
-        elif amount >= 0:
-            custom_note = 'Versement'
-        else:
-            custom_note = 'Crédit'
+        base_type = 'client_pay'
+        if self.current_mode in ['client_payment', 'client_pay']:
+            base_type = 'client_pay'
+        elif self.current_mode in ['supplier_payment', 'supplier_pay']:
+            base_type = 'supplier_pay'
+        custom_note = 'Versement' if amount >= 0 else 'Crédit'
         server_id_to_update = None
         if self.editing_transaction_key:
             if self.editing_transaction_key == 'SERVER_EDIT_MODE':
@@ -2138,18 +1942,16 @@ class StockApp(MDApp):
         self.cart_list_layout = MDList()
         self.cart_scroll_view.add_widget(self.cart_list_layout)
         layout.add_widget(self.cart_scroll_view)
-        self.footer_card = MDCard(orientation='vertical', size_hint_y=None, height=dp(150), padding=dp(15), spacing=dp(10), elevation=10, radius=[20, 20, 0, 0])
-        self.total_bg_card = MDCard(size_hint_y=None, height=dp(65), radius=[12], md_bg_color=(0.92, 0.92, 0.92, 1), elevation=0, padding=[dp(15), 0])
-        total_row = MDBoxLayout(orientation='horizontal', spacing=dp(10))
-        self.lbl_total_title = MDLabel(text='TOTAL:', font_style='Subtitle1', theme_text_color='Secondary', bold=True, valign='center', size_hint_x=None, width=dp(70))
-        self.lbl_cart_screen_total = MDLabel(text='0.00 DA', halign='right', valign='center', font_style='H5', bold=True, theme_text_color='Custom', text_color=self.theme_cls.primary_color)
+        footer_card = MDCard(orientation='vertical', size_hint_y=None, height=dp(120), padding=dp(15), spacing=dp(10), elevation=4, radius=[15, 15, 0, 0])
+        total_row = MDBoxLayout(orientation='horizontal', size_hint_y=None, height=dp(40))
+        self.lbl_total_title = MDLabel(text='TOTAL À PAYER', font_style='Subtitle2', theme_text_color='Hint', valign='center')
         total_row.add_widget(self.lbl_total_title)
+        self.lbl_cart_screen_total = MDLabel(text='0.00 DA', halign='right', font_style='H4', bold=True, theme_text_color='Custom', text_color=self.theme_cls.primary_color)
         total_row.add_widget(self.lbl_cart_screen_total)
-        self.total_bg_card.add_widget(total_row)
-        self.footer_card.add_widget(self.total_bg_card)
-        self.btn_validate_cart = MDFillRoundFlatButton(text='VALIDER LA COMMANDE', font_size='19sp', size_hint=(1, None), height=dp(55), md_bg_color=(0, 0.7, 0, 1), on_release=self.open_payment_dialog)
-        self.footer_card.add_widget(self.btn_validate_cart)
-        layout.add_widget(self.footer_card)
+        footer_card.add_widget(total_row)
+        self.btn_validate_cart = MDFillRoundFlatButton(text='VALIDER LA COMMANDE', font_size='18sp', size_hint=(1, None), height=dp(50), md_bg_color=(0, 0.7, 0, 1), on_release=self.open_payment_dialog)
+        footer_card.add_widget(self.btn_validate_cart)
+        layout.add_widget(footer_card)
         screen.add_widget(layout)
         return screen
 
@@ -2176,48 +1978,18 @@ class StockApp(MDApp):
             self.show_entity_selection_dialog(instance)
 
     def refresh_cart_screen_items(self):
-        from kivymd.uix.card import MDCard
-        from kivymd.uix.boxlayout import MDBoxLayout
-        from kivymd.uix.label import MDLabel
-        from kivymd.uix.button import MDIconButton
-        is_invoice_mode = self.current_mode in ['invoice_sale', 'invoice_purchase', 'proforma']
-        total_ht, total_tva = self.calculate_cart_totals(self.cart, is_invoice_mode)
-        items_count = len(self.cart)
-        timbre = 0.0
-        if self.current_mode == 'invoice_sale':
-            method = getattr(self, 'editing_payment_method', '')
-            if method in ['دفع نقدًا', 'Espèce']:
-                timbre = self._calculate_stamp_duty(total_ht + total_tva)
-        total_ttc = self._round_num(total_ht + total_tva + timbre)
-        for widget in self.sm.get_screen('cart').children:
-            from kivymd.uix.toolbar import MDTopAppBar
-            if isinstance(widget, MDTopAppBar):
-                widget.title = f'Panier ({items_count})'
+        try:
+            total_val = sum((float(i.get('price', 0)) * float(i.get('qty', 0)) for i in self.cart))
+        except:
+            total_val = 0
         if self.current_mode == 'transfer':
-            if hasattr(self, 'total_bg_card'):
-                self.total_bg_card.opacity = 0
-                self.total_bg_card.height = 0
-                self.total_bg_card.disabled = True
-            if hasattr(self, 'footer_card'):
-                self.footer_card.height = dp(85)
-            if hasattr(self, 'btn_validate_cart'):
-                self.btn_validate_cart.text = 'VALIDER'
-        else:
-            if hasattr(self, 'total_bg_card'):
-                self.total_bg_card.opacity = 1
-                self.total_bg_card.height = dp(65)
-                self.total_bg_card.disabled = False
-            if hasattr(self, 'footer_card'):
-                self.footer_card.height = dp(150)
             if hasattr(self, 'lbl_cart_screen_total'):
-                self.lbl_cart_screen_total.text = f'{total_ttc:.2f} DA'
-                if hasattr(self, 'lbl_total_title'):
-                    if timbre > 0:
-                        self.lbl_total_title.text = 'TOTAL (+Timbre):'
-                        self.lbl_total_title.width = dp(130)
-                    else:
-                        self.lbl_total_title.text = 'TOTAL:'
-                        self.lbl_total_title.width = dp(70)
+                self.lbl_cart_screen_total.text = ''
+            if hasattr(self, 'btn_validate_cart'):
+                self.btn_validate_cart.text = 'VALIDER TRANSFERT'
+        else:
+            if hasattr(self, 'lbl_cart_screen_total'):
+                self.lbl_cart_screen_total.text = f'{total_val:.2f} DA'
             if hasattr(self, 'btn_validate_cart'):
                 self.btn_validate_cart.text = 'VALIDER LA COMMANDE'
         if hasattr(self, 'btn_ent_screen'):
@@ -2235,8 +2007,7 @@ class StockApp(MDApp):
                 self.btn_loc_screen.disabled = False
                 if self.selected_entity:
                     self.btn_ent_screen.text = self.fix_text(self.selected_entity.get('name', 'Tiers'))[:15]
-                color_bg = (0, 0.6, 0.6, 1) if self.current_mode in ['sale', 'client_payment', 'invoice_sale', 'proforma'] else (0.8, 0.4, 0, 1)
-                self.btn_ent_screen.md_bg_color = color_bg
+                self.btn_ent_screen.md_bg_color = (0, 0.6, 0.6, 1) if self.current_mode in ['sale', 'client_payment', 'invoice_sale', 'proforma'] else (0.8, 0.4, 0, 1)
         self.update_location_display()
         self.cart_list_layout.clear_widgets()
         if not self.cart:
@@ -2245,32 +2016,19 @@ class StockApp(MDApp):
             try:
                 p = float(item.get('price', 0))
                 q = float(item.get('qty', 0))
-                t_rate = float(item.get('tva', 0)) if is_invoice_mode else 0.0
-                line_ht = self._round_num(p * q)
-                line_ttc = self._round_num(line_ht * (1 + t_rate / 100.0))
+                t = p * q
                 q_disp = str(int(q)) if q.is_integer() else str(q)
                 if self.current_mode == 'transfer':
-                    sec_text = f'Qté: {q_disp}'
-                    sec_color = (0.1, 0.4, 0.8, 1)
+                    sec = f'[color=#1976D2][b][size=20sp]Qté: {q_disp}[/size][/b][/color]'
                 else:
-                    sec_text = f'{p:.2f} DA x {q_disp}'
-                    if t_rate > 0 and is_invoice_mode:
-                        sec_text += f' (+{int(t_rate)}% TVA)'
-                    sec_text += f' = {line_ttc:.2f} DA'
-                    sec_color = (0.4, 0.4, 0.4, 1)
-                product_name = self.fix_text(item.get('name', ''))
-                card = MDCard(orientation='horizontal', size_hint_y=None, height=dp(85), padding=[dp(15), 0, 0, 0], radius=[0], elevation=0, ripple_behavior=True, md_bg_color=(1, 1, 1, 1), on_release=lambda x, it=item: self.edit_cart_item(it))
-                text_box = MDBoxLayout(orientation='vertical', pos_hint={'center_y': 0.5}, adaptive_height=True, spacing=dp(6))
-                lbl_name = MDLabel(text=product_name, font_style='Subtitle1', bold=False, theme_text_color='Primary', shorten=False, max_lines=2, halign='left', adaptive_height=True)
-                lbl_details = MDLabel(text=sec_text, font_size='16sp', theme_text_color='Custom', text_color=sec_color, bold=True, halign='left', adaptive_height=True)
-                text_box.add_widget(lbl_name)
-                text_box.add_widget(lbl_details)
-                del_btn = MDIconButton(icon='delete', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), pos_hint={'center_y': 0.5}, icon_size='24sp', on_release=lambda x, it=item: self.remove_from_cart(it))
-                card.add_widget(text_box)
-                card.add_widget(del_btn)
-                self.cart_list_layout.add_widget(card)
+                    sec = f'[b][size=16sp]{p:.2f} DA x {q_disp} = {t:.2f} DA[/size][/b]'
+                li = TwoLineAvatarIconListItem(text=self.fix_text(item.get('name', '')), secondary_text=sec, on_release=lambda x, it=item: self.edit_cart_item(it))
+                del_btn = IconRightWidget(icon='delete', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), on_release=lambda x, it=item: self.remove_from_cart(it))
+                li.add_widget(del_btn)
+                li.add_widget(IconLeftWidget(icon='package-variant'))
+                self.cart_list_layout.add_widget(li)
             except Exception as e:
-                print(f'Error rendering item: {e}')
+                print(e)
 
     def edit_cart_item(self, item):
 
@@ -2282,12 +2040,9 @@ class StockApp(MDApp):
                 return str(val_float)
             except:
                 return '0'
-        is_invoice = self.current_mode in ['invoice_sale', 'invoice_purchase', 'proforma']
-        dialog_height = dp(600) if is_invoice else dp(520)
-        content = MDBoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height=dialog_height, padding=[0, '5dp', 0, 0])
+        content = MDBoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height=dp(520), padding=[0, '5dp', 0, 0])
         self.active_edit_target = 'qty'
         self.input_reset_mode = True
-        self.name_cleared_once = False
 
         def update_edit_colors():
             ACTIVE_BG = (0.9, 1, 0.9, 1)
@@ -2306,46 +2061,10 @@ class StockApp(MDApp):
                 else:
                     self.edit_price_card.md_bg_color = INACTIVE_BG
                     self.edit_price_card.elevation = 0
-            if hasattr(self, 'edit_tva_card'):
-                if self.active_edit_target == 'tva':
-                    self.edit_tva_card.md_bg_color = ACTIVE_BG
-                    self.edit_tva_card.elevation = 3
-                else:
-                    self.edit_tva_card.md_bg_color = INACTIVE_BG
-                    self.edit_tva_card.elevation = 0
-            if hasattr(self, 'edit_name_card'):
-                if self.active_edit_target == 'name':
-                    self.edit_name_card.md_bg_color = ACTIVE_BG
-                    self.edit_name_card.elevation = 3
-                else:
-                    self.edit_name_card.md_bg_color = INACTIVE_BG
-                    self.edit_name_card.elevation = 0
-        raw_name = item.get('name', 'Produit')
-        is_autre_article = str(raw_name).startswith('Autre Article')
-        if is_autre_article:
-            self.edit_name_card = MDCard(size_hint_y=None, height='70dp', radius=[10], padding=[10, 0, 10, 0], elevation=0)
-            self.edit_name_field = SmartTextField(text=self.fix_text(raw_name), hint_text="Nom de l'article", font_size='22sp', halign='center', mode='line', line_color_normal=(0, 0, 0, 0), line_color_focus=(0, 0, 0, 0), pos_hint={'center_y': 0.5})
-
-            def on_name_touch(instance, touch):
-                if instance.collide_point(*touch.pos):
-                    self.active_edit_target = 'name'
-                    update_edit_colors()
-                    if not self.name_cleared_once:
-                        instance.text = ''
-                        if hasattr(instance, '_raw_text'):
-                            instance._raw_text = ''
-                        self.name_cleared_once = True
-                    return False
-                return False
-            self.edit_name_field.bind(on_touch_down=on_name_touch)
-            self.edit_name_card.add_widget(self.edit_name_field)
-            name_row_container = MDBoxLayout(size_hint_y=None, height='75dp', padding=[20, 0, 20, 0])
-            name_row_container.add_widget(self.edit_name_card)
-            content.add_widget(name_row_container)
-        else:
-            product_name = self.fix_text(raw_name)
-            lbl_prod = MDLabel(text=product_name, halign='center', bold=True, font_style='Subtitle1', theme_text_color='Primary', adaptive_height=True)
-            content.add_widget(lbl_prod)
+        # =========================
+        product_name = self.fix_text(item.get('name', 'Produit'))
+        lbl_prod = MDLabel(text=product_name, halign='center', bold=True, font_style='Subtitle1', theme_text_color='Primary', adaptive_height=True)
+        content.add_widget(lbl_prod)
         if self.current_mode != 'transfer':
             price_val = item.get('price', 0)
             self.edit_price_card = MDCard(size_hint_y=None, height='70dp', radius=[10], padding=[10, 0, 10, 0], elevation=0)
@@ -2367,27 +2086,6 @@ class StockApp(MDApp):
             price_row_container = MDBoxLayout(size_hint_y=None, height='75dp', padding=[60, 0, 60, 0])
             price_row_container.add_widget(self.edit_price_card)
             content.add_widget(price_row_container)
-        if is_invoice:
-            tva_val = item.get('tva', 0)
-            self.edit_tva_card = MDCard(size_hint_y=None, height='60dp', radius=[10], padding=[10, 0, 10, 0], elevation=0)
-            self.edit_tva_field = NoMenuTextField(text=fmt_num(tva_val), hint_text='TVA %', font_size='24sp', halign='center', mode='line', readonly=True, line_color_normal=(0, 0, 0, 0), line_color_focus=(0, 0, 0, 0), pos_hint={'center_y': 0.5})
-            self.edit_tva_field.theme_text_color = 'Custom'
-            self.edit_tva_field.text_color_normal = (0, 0, 0, 1)
-            self.edit_tva_field.text_color_focus = (0, 0, 0, 1)
-
-            def on_tva_touch(instance, touch):
-                if instance.collide_point(*touch.pos):
-                    if self.active_edit_target != 'tva':
-                        self.input_reset_mode = True
-                    self.active_edit_target = 'tva'
-                    update_edit_colors()
-                    return True
-                return False
-            self.edit_tva_field.bind(on_touch_down=on_tva_touch)
-            self.edit_tva_card.add_widget(self.edit_tva_field)
-            tva_row = MDBoxLayout(size_hint_y=None, height='65dp', padding=[100, 0, 100, 0])
-            tva_row.add_widget(self.edit_tva_card)
-            content.add_widget(tva_row)
         qty_row = MDBoxLayout(orientation='horizontal', spacing='10dp', size_hint_y=None, height='65dp', padding=[40, 0])
         btn_minus = MDIconButton(icon='minus', theme_text_color='Custom', text_color=(1, 1, 1, 1), md_bg_color=(0.9, 0.3, 0.3, 1), pos_hint={'center_y': 0.5}, icon_size='20sp')
         qty_val = item.get('qty', 1)
@@ -2427,14 +2125,7 @@ class StockApp(MDApp):
                     p = 0.0
             else:
                 p = float(item.get('price', 0))
-            tva = 0.0
-            if hasattr(self, 'edit_tva_field'):
-                try:
-                    tva = float(self.edit_tva_field.text or 0)
-                except:
-                    tva = 0.0
-            line_ht = self._round_num(q * p)
-            total = self._round_num(line_ht * (1 + tva / 100.0))
+            total = p * q
             if self.current_mode != 'transfer':
                 self.btn_save_edit.text = f'MODIFIER\n{total:.2f} DA'
             else:
@@ -2454,18 +2145,12 @@ class StockApp(MDApp):
         btn_minus.bind(on_release=lambda x: change_qty(-1))
 
         def get_active_field():
-            if self.active_edit_target == 'name':
-                return None
             if self.active_edit_target == 'price' and hasattr(self, 'edit_price_field'):
                 return self.edit_price_field
-            if self.active_edit_target == 'tva' and hasattr(self, 'edit_tva_field'):
-                return self.edit_tva_field
             return self.edit_qty_field
 
         def add_digit(digit):
             field = get_active_field()
-            if not field:
-                return
             current = field.text
             if self.input_reset_mode:
                 if digit == '.':
@@ -2488,8 +2173,6 @@ class StockApp(MDApp):
 
         def backspace(x=None):
             field = get_active_field()
-            if not field:
-                return
             current = field.text
             self.input_reset_mode = False
             if len(current) > 0:
@@ -2521,17 +2204,6 @@ class StockApp(MDApp):
                     if new_p < 0:
                         raise ValueError
                     item['price'] = new_p
-                if hasattr(self, 'edit_tva_field'):
-                    tva_text = self.edit_tva_field.text or '0'
-                    new_tva = float(tva_text)
-                    if new_tva < 0:
-                        new_tva = 0
-                    item['tva'] = new_tva
-                if hasattr(self, 'edit_name_field'):
-                    new_name_val = self.edit_name_field.get_value().strip()
-                    if new_name_val:
-                        item['name'] = new_name_val
-                        item['name_override'] = new_name_val
                 self.refresh_cart_screen_items()
                 self.update_cart_button()
                 self.edit_dialog.dismiss()
@@ -2753,11 +2425,16 @@ class StockApp(MDApp):
 
     def open_mode(self, mode, skip_dialog=False):
         self.current_mode = mode
+        
+        # لا تقم بمسح البيانات إذا كنا في وضع التعديل (تخطي الديالوج)
         if not skip_dialog:
             self.cart = []
             self.selected_entity = None
+        
         self.update_cart_button()
         self.selected_location = 'store'
+        # self.selected_entity = None # تم إزالتها من هنا ووضعها داخل الشرط أعلاه
+        
         titles = {'sale': 'Vente', 'purchase': 'Achat', 'return_sale': 'Retour Client', 'return_purchase': 'Retour Frns', 'transfer': 'Transfert', 'manage_products': 'Gestion Produits', 'invoice_sale': 'Facture Vente', 'invoice_purchase': 'Facture Achat', 'proforma': 'Facture Proforma', 'order_purchase': 'Bon de Commande'}
         self.prod_toolbar.title = titles.get(mode, 'Produits')
         colors = {'sale': 'Green', 'purchase': 'Orange', 'return_sale': 'Red', 'return_purchase': 'Teal', 'transfer': 'Purple', 'manage_products': 'Blue', 'invoice_sale': 'Blue', 'invoice_purchase': 'DeepOrange', 'proforma': 'Purple', 'order_purchase': 'Teal'}
@@ -2779,11 +2456,6 @@ class StockApp(MDApp):
                 self.cart_bar.size_hint_y = None
                 self.cart_bar.opacity = 1
                 self.cart_bar.disabled = False
-        if self.rv_products:
-            self.rv_products.data = []
-            self.rv_products.refresh_from_data()
-        if self.all_products_raw:
-            self.prepare_products_for_rv(self.all_products_raw)
 
         def enter_products_screen():
             self.sm.current = 'products'
@@ -2792,12 +2464,16 @@ class StockApp(MDApp):
                 if mode != 'transfer' and mode != 'manage_products':
                     entity_type = 'supplier' if mode in ['purchase', 'return_purchase', 'invoice_purchase', 'order_purchase'] else 'account'
                     self.fetch_entities(entity_type)
-            elif not self.all_products_raw:
+            else:
                 self.load_products_from_cache()
+                self.prepare_products_for_rv(self.all_products_raw)
             if self.search_field:
                 self.search_field.text = ''
+        
         modes_requiring_entity = ['sale', 'purchase', 'return_sale', 'return_purchase', 'invoice_sale', 'invoice_purchase', 'proforma', 'order_purchase']
-        if mode in modes_requiring_entity and (not skip_dialog):
+        
+        # الشرط الجديد: إذا كان الوضع يتطلب زبوناً ولم نطلب تخطي الديالوج
+        if mode in modes_requiring_entity and not skip_dialog:
             entity_type = 'supplier' if mode in ['purchase', 'return_purchase', 'invoice_purchase', 'order_purchase'] else 'account'
             if self.is_server_reachable:
                 self.fetch_entities(entity_type)
@@ -2824,19 +2500,15 @@ class StockApp(MDApp):
         is_sale_context = mode in ['sale', 'return_sale', 'invoice_sale', 'proforma']
         curr_price = 0
         if is_sale_context:
-            has_promo = product.get('has_promo', False)
-            if has_promo:
-                curr_price = float(product.get('price', 0))
-            else:
-                cat = ''
-                if self.selected_entity:
-                    cat = str(self.selected_entity.get('category', ''))
-                if cat in ['Gros', 'جملة']:
-                    curr_price = product.get('price_wholesale', 0)
-                elif cat in ['Demi-Gros', 'نصف جملة']:
-                    curr_price = product.get('price_semi', 0)
-                if float(curr_price or 0) == 0:
-                    curr_price = product.get('price', 0)
+            cat = ''
+            if self.selected_entity:
+                cat = str(self.selected_entity.get('category', ''))
+            if cat in ['Gros', 'جملة']:
+                curr_price = product.get('price_wholesale', 0)
+            elif cat in ['Demi-Gros', 'نصف جملة']:
+                curr_price = product.get('price_semi', 0)
+            if float(curr_price or 0) == 0:
+                curr_price = product.get('price', 0)
         else:
             curr_price = product.get('purchase_price', product.get('price', 0))
         prod_name = self.fix_text(product.get('name'))
@@ -2861,12 +2533,10 @@ class StockApp(MDApp):
                 else:
                     self.price_card.md_bg_color = INACTIVE_BG
                     self.price_card.elevation = 0
+        # ==========================================
         header_box = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing='5dp', padding=[0, 0, 0, '5dp'])
         lbl_prod = MDLabel(text=prod_name, halign='center', bold=True, font_style='Subtitle1', theme_text_color='Primary', adaptive_height=True)
         header_box.add_widget(lbl_prod)
-        if is_sale_context and product.get('has_promo', False):
-            promo_label = MDLabel(text='PROMOTION ACTIVÉE', halign='center', theme_text_color='Custom', text_color=(1, 0, 0, 1), font_style='Caption', bold=True, adaptive_height=True)
-            header_box.add_widget(promo_label)
         dialog_height = dp(420) if is_transfer else dp(500)
         content = MDBoxLayout(orientation='vertical', spacing='8dp', size_hint_y=None, height=dialog_height, padding=[0, '5dp', 0, 0])
         content.add_widget(header_box)
@@ -3026,22 +2696,16 @@ class StockApp(MDApp):
         self.dialog = MDDialog(title='', type='custom', content_cls=content, buttons=[], size_hint=(0.85, None))
         self.dialog.open()
 
-    def show_manage_product_dialog(self, product, prefilled_barcode=None):
+    def show_manage_product_dialog(self, product):
         if not self.is_server_reachable:
             self.dialog = MDDialog(title='Hors Ligne', text='Impossible de gérer les produits en mode hors ligne.\nVeuillez vous connecter au serveur.', buttons=[MDFlatButton(text='OK', on_release=lambda x: self.dialog.dismiss())])
             self.dialog.open()
-            return
-        if product and product.get('name') == 'Autre Article':
-            self.notify('Modification interdite pour cet article (Système)', 'error')
             return
         is_edit = product is not None
         title = 'Fiche Produit'
         val_name = product.get('name', '') if is_edit else ''
         val_ref = product.get('ref', product.get('product_ref', '')) if is_edit else ''
-        if is_edit:
-            val_barcode = product.get('barcode', '')
-        else:
-            val_barcode = prefilled_barcode if prefilled_barcode else ''
+        val_barcode = product.get('barcode', '') if is_edit else ''
         val_desc = product.get('description', '') if is_edit else ''
         is_used = product.get('is_used', False) if is_edit else False
 
@@ -3193,19 +2857,6 @@ class StockApp(MDApp):
             final_price = float(product.get('price', 0))
         except:
             final_price = 0.0
-        if product.get('name') == 'Autre Article':
-            count = sum((1 for item in self.cart if str(item.get('name')).startswith('Autre Article')))
-            new_name = f'Autre Article {count + 1}'
-            self.cart.append({'id': product['id'], 'name': new_name, 'price': final_price, 'qty': qty})
-            if hasattr(self, 'dialog') and self.dialog:
-                self.dialog.dismiss()
-            self.update_cart_button()
-            self.notify(f'Ajouté: {new_name}', 'success')
-            if hasattr(self, 'search_field') and self.search_field:
-                self.search_field.text = ''
-                self.filter_products(None, '')
-                Clock.schedule_once(lambda x: setattr(self.search_field, 'focus', True), 0.2)
-            return
         found = False
         for item in self.cart:
             if item['id'] == product['id']:
@@ -3227,8 +2878,7 @@ class StockApp(MDApp):
     def update_cart_button(self):
         try:
             count = len(self.cart)
-            is_invoice_mode = self.current_mode in ['invoice_sale', 'invoice_purchase', 'proforma']
-            total = sum((float(item['price'] or 0) * float(item['qty'] or 0) * (1 + (float(item.get('tva', 0)) if is_invoice_mode else 0) / 100) for item in self.cart))
+            total = sum((float(item['price'] or 0) * float(item['qty'] or 0) for item in self.cart))
             if self.lbl_cart_count:
                 self.lbl_cart_count.text = f'PANIER ({count})'
             if self.current_mode == 'transfer':
@@ -3303,16 +2953,7 @@ class StockApp(MDApp):
             else:
                 self.txt_simple_amount.text = current + str(digit)
         input_row = MDBoxLayout(orientation='horizontal', size_hint_y=None, height=dp(90), spacing='10dp', padding=[dp(20), 0])
-        val = ''
-        if amount:
-            try:
-                f_val = float(amount)
-                if f_val.is_integer():
-                    val = str(int(f_val))
-                else:
-                    val = str(f_val)
-            except:
-                val = str(amount)
+        val = str(amount) if amount else ''
         self.txt_simple_amount = MDTextField(text=val, hint_text='Montant (DA)', font_size='44sp', halign='center', readonly=True, mode='fill', line_color_focus=theme_col, size_hint_x=0.8)
         self.txt_simple_amount.get_value = lambda: self.txt_simple_amount.text
         btn_del = MDIconButton(icon='backspace-outline', theme_text_color='Custom', text_color=(1, 1, 1, 1), md_bg_color=(0.9, 0.1, 0.1, 1), size_hint=(0.2, 1), icon_size='32sp', on_release=backspace)
@@ -3433,23 +3074,6 @@ class StockApp(MDApp):
         self.update_cart_button()
         self.notify('Prix mis à jour selon le client', 'info')
 
-    def _calculate_stamp_duty(self, amount):
-        try:
-            val = float(amount)
-        except (ValueError, TypeError):
-            return 0.0
-        if val <= 300:
-            return 0.0
-        units = math.ceil(val / 100.0)
-        if val <= 30000:
-            duty = units * 1.0
-        elif val <= 100000:
-            duty = units * 1.5
-        else:
-            duty = units * 2.0
-        final_duty = math.ceil(duty)
-        return float(max(5.0, final_duty))
-
     def open_payment_dialog(self, x):
         current_time = time.time()
         if current_time - getattr(self, '_last_click_time', 0) < 1.0:
@@ -3458,92 +3082,64 @@ class StockApp(MDApp):
         if getattr(self, 'is_transaction_in_progress', False):
             return
         if not self.cart:
-            self.dialog = MDDialog(title='Attention', text='Le panier est vide !', buttons=[MDFlatButton(text='OK', on_release=lambda x: self.dialog.dismiss())])
+            self.dialog = MDDialog(title='Attention', text='Le panier est vide ! Impossible de procéder sans produits.', buttons=[MDFlatButton(text='OK', on_release=lambda x: self.dialog.dismiss())])
             self.dialog.open()
             return
-        self.is_invoice_sale = self.current_mode == 'invoice_sale'
-        is_invoice_mode = self.current_mode in ['invoice_sale', 'invoice_purchase', 'proforma']
-        total_ht, total_tva = self.calculate_cart_totals(self.cart, is_invoice_mode)
-        self.temp_total_ht = total_ht
-        self.temp_total_tva = total_tva
-        base_ttc = self._round_num(total_ht + total_tva)
-        is_zero_pay_mode = self.current_mode in ['transfer', 'proforma', 'order_purchase']
-        server_default_names = ['COMPTOIR', 'Comptoir', 'Fournisseur', 'زبون افتراضي', 'مورد افتراضي', 'DEFAULT_CUSTOMER', 'DEFAULT_SUPPLIER']
-        ent_name = str(self.selected_entity.get('name', '')).strip() if self.selected_entity else ''
-        is_comptoir_entity = ent_name in server_default_names or not self.selected_entity or ent_name == ''
-        should_skip_dialog = False
-        if is_zero_pay_mode:
-            should_skip_dialog = True
-        elif is_comptoir_entity:
-            should_skip_dialog = True
-        if should_skip_dialog:
-            final_paid_amount = 0.0
-            method_val = ''
-            if is_zero_pay_mode:
-                final_paid_amount = 0.0
-            else:
-                timbre = 0.0
-                if self.is_invoice_sale:
-                    method_val = 'Espèce'
-                    timbre = self._calculate_stamp_duty(base_ttc)
-                elif self.current_mode == 'sale':
-                    method_val = 'Espèce'
-                else:
-                    method_val = 'Espèce'
-                final_paid_amount = self._round_num(base_ttc + timbre)
-                if self.current_mode in ['return_sale', 'return_purchase']:
-                    final_paid_amount = base_ttc
-            self.process_transaction(final_paid_amount, base_ttc, method=method_val)
-            return
-        self.show_details = is_invoice_mode
-        if self.is_invoice_sale:
-            self.payment_methods = [{'label': 'Par défaut', 'value': ''}, {'label': 'Espèce', 'value': 'دفع نقدًا'}, {'label': 'Chèque', 'value': 'صك بنكي'}, {'label': 'Virement', 'value': 'تحويل بنكي'}, {'label': 'Versement', 'value': 'إيداع'}]
-            self.current_method_index = 0
-            if hasattr(self, 'editing_payment_method') and self.editing_payment_method:
-                for idx, m in enumerate(self.payment_methods):
-                    if m['value'] == self.editing_payment_method:
-                        self.current_method_index = idx
-                        break
-        dialog_height = dp(640) if self.show_details else dp(580)
-        content = MDBoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height=dialog_height, padding=['10dp', '0dp', '10dp', '20dp'])
-        header_box = MDBoxLayout(orientation='horizontal', size_hint_y=None, height=dp(50), spacing=dp(10))
-        lbl_title = MDLabel(text='Paiement', font_style='H5', bold=True, theme_text_color='Primary', valign='center')
-        header_box.add_widget(lbl_title)
-        if self.is_invoice_sale:
-            self.btn_payment_method = MDRaisedButton(text=self.payment_methods[self.current_method_index]['label'], md_bg_color=(0.2, 0.2, 0.2, 1), elevation=2, pos_hint={'center_y': 0.5}, on_release=self._cycle_payment_method)
-            header_box.add_widget(self.btn_payment_method)
-        content.add_widget(header_box)
-        card_height = dp(125) if self.show_details else dp(90)
-        total_card = MDCard(orientation='vertical', size_hint_y=None, height=card_height, radius=[10], md_bg_color=(0.95, 0.95, 0.95, 1), elevation=1, padding='5dp')
-        if self.show_details:
-            details_box = MDBoxLayout(orientation='horizontal', size_hint_y=None, height=dp(25), padding=[dp(5), 0], spacing=dp(5))
-            lbl_ht = MDLabel(text=f'HT: {self.temp_total_ht:.2f} DA', theme_text_color='Secondary', font_style='Caption', halign='left', bold=True, size_hint_x=0.33)
-            details_box.add_widget(lbl_ht)
-            self.lbl_timbre = MDLabel(text='', theme_text_color='Custom', text_color=(0.5, 0, 0.5, 1), font_style='Caption', halign='center', bold=True, size_hint_x=0.33)
-            details_box.add_widget(self.lbl_timbre)
-            lbl_tva = MDLabel(text=f'TVA: {self.temp_total_tva:.2f} DA', theme_text_color='Custom', text_color=(0.8, 0, 0, 1), font_style='Caption', halign='right', bold=True, size_hint_x=0.33)
-            details_box.add_widget(lbl_tva)
-            total_card.add_widget(details_box)
-        else:
-            self.lbl_timbre = MDLabel()
-        total_box = MDBoxLayout(orientation='vertical', spacing=0)
-        total_lbl_title = MDLabel(text='NET À PAYER', halign='center', font_style='Caption', theme_text_color='Secondary', size_hint_y=None, height=dp(20))
-        self.lbl_final_total = MDLabel(text='', halign='center', font_style='H4', bold=True, theme_text_color='Primary')
-        total_box.add_widget(total_lbl_title)
-        total_box.add_widget(self.lbl_final_total)
-        total_card.add_widget(total_box)
-        content.add_widget(total_card)
         try:
-            default_val = f'{float(self.editing_payment_amount or 0):.2f}'
+            total = sum((float(i.get('price', 0)) * float(i.get('qty', 0)) for i in self.cart))
+        except:
+            total = 0
+        saved_amount = 0
+        if hasattr(self, 'editing_payment_amount') and self.editing_payment_amount is not None:
+            saved_amount = self.editing_payment_amount
+        try:
+            default_val = f'{float(saved_amount):.2f}'
         except:
             default_val = '0.00'
-        self.txt_paid = MDTextField(text=default_val, hint_text='Montant Versé (DA)', font_size='40sp', halign='center', readonly=True, size_hint_y=None, height=dp(80), mode='fill', line_color_focus=(0, 0, 0, 0))
+        auto_pay_names = ['COMPTOIR', 'Comptoir', 'زبون افتراضي', 'مورد افتراضي', 'DEFAULT_CUSTOMER']
+        current_name = self.selected_entity.get('name', '') if self.selected_entity else ''
+        is_comptoir = False
+        if current_name:
+            is_comptoir = any((name.upper() == current_name.upper() for name in auto_pay_names))
+        is_no_payment_doc = self.current_mode in ['proforma', 'order_purchase']
+        should_skip = False
+        if self.current_mode == 'transfer':
+            should_skip = True
+        elif is_no_payment_doc:
+            should_skip = True
+        elif is_comptoir:
+            should_skip = True
+        if should_skip:
+            payment_val = 0 if is_no_payment_doc else total
+            self.process_transaction(paid_amount=payment_val, total_amount=total)
+            return
+        content = MDBoxLayout(orientation='vertical', spacing='10dp', size_hint_y=None, height=dp(550), padding='10dp')
+        total_card = MDCard(orientation='vertical', size_hint_y=None, height=dp(60), radius=[10], md_bg_color=(0.95, 0.95, 0.95, 1), elevation=1, padding='5dp')
+        total_lbl_title = MDLabel(text='TOTAL À PAYER', halign='center', font_style='Caption', theme_text_color='Secondary')
+        total_lbl_val = MDLabel(text=f'{total:.2f} DA', halign='center', font_style='H5', bold=True, theme_text_color='Primary')
+        total_card.add_widget(total_lbl_title)
+        total_card.add_widget(total_lbl_val)
+        content.add_widget(total_card)
+        self.txt_paid = MDTextField(text=default_val, hint_text='Montant Versé (DA)', font_size='36sp', halign='center', readonly=True, size_hint_y=None, height=dp(80), mode='fill', line_color_focus=(0, 0, 0, 0))
         self.txt_paid.get_value = lambda: self.txt_paid.text
         content.add_widget(self.txt_paid)
         self.lbl_rest = MDLabel(text='', halign='center', theme_text_color='Custom', font_style='H6', bold=True, size_hint_y=None, height=dp(30))
         content.add_widget(self.lbl_rest)
-        grid = MDGridLayout(cols=3, spacing='10dp', size_hint_y=1)
-        keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', 'DEL']
+
+        def update_rest_logic():
+            try:
+                val_str = self.txt_paid.text
+                paid = float(val_str) if val_str else 0
+            except:
+                paid = 0
+            d = total - paid
+            if d >= 0:
+                self.lbl_rest.text = f'RESTE: {d:.2f} DA'
+                self.lbl_rest.text_color = (0.8, 0, 0, 1)
+            else:
+                self.lbl_rest.text = f'RENDU: {abs(d):.2f} DA'
+                self.lbl_rest.text_color = (0, 0.6, 0, 1)
+        update_rest_logic()
 
         def add_digit(digit):
             current = self.txt_paid.text
@@ -3558,7 +3154,7 @@ class StockApp(MDApp):
                 self.txt_paid.text = str(digit)
             else:
                 self.txt_paid.text = current + str(digit)
-            self._recalc_ui_totals()
+            update_rest_logic()
 
         def backspace(instance=None):
             current = self.txt_paid.text
@@ -3566,7 +3162,9 @@ class StockApp(MDApp):
                 self.txt_paid.text = current[:-1]
             if not self.txt_paid.text:
                 self.txt_paid.text = '0'
-            self._recalc_ui_totals()
+            update_rest_logic()
+        grid = MDGridLayout(cols=3, spacing='10dp', size_hint_y=1)
+        keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', 'DEL']
         for key in keys:
             if key == 'DEL':
                 btn = MDIconButton(icon='backspace', theme_text_color='Custom', text_color=(1, 1, 1, 1), md_bg_color=(0.4, 0.4, 0.4, 1), size_hint=(1, 1), icon_size='24sp', on_release=backspace)
@@ -3575,50 +3173,15 @@ class StockApp(MDApp):
                 btn = MDRaisedButton(text=key, md_bg_color=(1, 1, 1, 1), theme_text_color='Custom', text_color=(0, 0, 0, 1), font_size='24sp', size_hint=(1, 1), elevation=1, on_release=lambda x, k=key: add_digit(k))
                 grid.add_widget(btn)
         content.add_widget(grid)
-        content.add_widget(MDBoxLayout(size_hint_y=None, height='15dp'))
-        buttons_box = MDBoxLayout(orientation='horizontal', spacing='10dp', size_hint_y=None, height='55dp')
+        content.add_widget(MDLabel(text='', size_hint_y=1))
+        buttons_box = MDBoxLayout(orientation='horizontal', spacing='10dp', size_hint_y=None, height='65dp')
         btn_cancel = MDFlatButton(text='ANNULER', theme_text_color='Custom', text_color=(0.5, 0.5, 0.5, 1), size_hint_x=0.3, on_release=lambda x: self.pay_dialog.dismiss())
-        btn_valid = MDRaisedButton(text='VALIDER', md_bg_color=(0, 0.7, 0, 1), text_color=(1, 1, 1, 1), size_hint_x=0.7, size_hint_y=1, font_size='20sp', elevation=2, on_release=lambda x: self.finalize_submission(self.current_final_total))
+        btn_valid = MDRaisedButton(text='VALIDER', md_bg_color=(0, 0.7, 0, 1), text_color=(1, 1, 1, 1), size_hint_x=0.7, size_hint_y=1, font_size='22sp', elevation=3, on_release=lambda x: self.finalize_submission(total))
         buttons_box.add_widget(btn_cancel)
         buttons_box.add_widget(btn_valid)
         content.add_widget(buttons_box)
-        self.pay_dialog = MDDialog(title='', type='custom', content_cls=content, buttons=[], size_hint=(0.94, 0.98))
-        self._recalc_ui_totals()
+        self.pay_dialog = MDDialog(title='Paiement', type='custom', content_cls=content, buttons=[], size_hint=(0.94, 0.98))
         self.pay_dialog.open()
-
-    def _recalc_ui_totals(self):
-        base_ttc = self._round_num(self.temp_total_ht + self.temp_total_tva)
-        timbre = 0.0
-        if hasattr(self, 'is_invoice_sale') and self.is_invoice_sale:
-            if hasattr(self, 'payment_methods') and self.payment_methods:
-                idx = getattr(self, 'current_method_index', 0)
-                if idx < len(self.payment_methods):
-                    selected_val = self.payment_methods[idx]['value']
-                    if selected_val in ['دفع نقدًا', 'Espèce']:
-                        timbre = self._calculate_stamp_duty(base_ttc)
-                        self.lbl_timbre.text = f'Timbre: {timbre:.2f} DA'
-                        self.lbl_timbre.opacity = 1
-                    else:
-                        self.lbl_timbre.text = ''
-                        self.lbl_timbre.opacity = 0
-                else:
-                    self.lbl_timbre.opacity = 0
-        else:
-            self.lbl_timbre.text = ''
-            self.lbl_timbre.opacity = 0
-        self.current_final_total = self._round_num(base_ttc + timbre)
-        self.lbl_final_total.text = f'{self.current_final_total:.2f} DA'
-        try:
-            paid = float(self.txt_paid.text or 0)
-        except:
-            paid = 0.0
-        diff = self._round_num(self.current_final_total - paid)
-        if diff >= 0:
-            self.lbl_rest.text = f'RESTE: {diff:.2f} DA'
-            self.lbl_rest.text_color = (0.8, 0, 0, 1)
-        else:
-            self.lbl_rest.text = f'RENDU: {abs(diff):.2f} DA'
-            self.lbl_rest.text_color = (0, 0.6, 0, 1)
 
     def finalize_submission(self, total_amount):
         current_time = time.time()
@@ -3629,15 +3192,6 @@ class StockApp(MDApp):
             return
         if self.pay_dialog:
             self.pay_dialog.dismiss()
-        payment_method = ''
-        if self.current_mode == 'invoice_sale':
-            if hasattr(self, 'payment_methods') and hasattr(self, 'current_method_index'):
-                try:
-                    payment_method = self.payment_methods[self.current_method_index]['value']
-                except:
-                    payment_method = ''
-        else:
-            payment_method = ''
         if self.current_mode == 'transfer':
             paid_amount = 0
         else:
@@ -3653,79 +3207,35 @@ class StockApp(MDApp):
                 excess = paid_amount - total_amount
                 self.show_overpayment_dialog(paid_amount, total_amount, excess)
                 return
-        Clock.schedule_once(lambda dt: self.process_transaction(paid_amount, total_amount, method=payment_method), 0.1)
-
-    def _cycle_payment_method(self, instance):
-        self.current_method_index = (self.current_method_index + 1) % len(self.payment_methods)
-        new_label = self.payment_methods[self.current_method_index]['label']
-        self.btn_payment_method.text = new_label
-        self._recalc_ui_totals()
+        self.process_transaction(paid_amount, total_amount)
 
     def show_overpayment_dialog(self, paid, total, excess):
-        content = MDBoxLayout(orientation='vertical', size_hint_y=None, adaptive_height=True, spacing='15dp', padding=[0, '10dp', 0, 0])
-        lbl_info = MDLabel(text=f'[b]Montant saisi:[/b] {paid:.2f} DA\n[b]Total:[/b] {total:.2f} DA', markup=True, halign='center', theme_text_color='Primary', font_style='Body1', size_hint_y=None, adaptive_height=True)
-        content.add_widget(lbl_info)
-        msg_text = ''
         if self.current_mode in ['return_sale', 'return_purchase']:
-            msg_text = f"L'excédent [color=#00C853][b]({excess:.2f} DA)[/b][/color] sera déduit du solde."
+            msg = f"Vous rendez {paid:.2f} DA pour un retour de {total:.2f} DA.\nL'excédent ({excess:.2f} DA) sera déduit du solde."
         else:
-            msg_text = f"L'excédent [color=#00C853][b]({excess:.2f} DA)[/b][/color] sera enregistré comme une opération séparée [b](VERSEMENT/RÈGLEMENT)[/b]."
-        lbl_msg = MDLabel(text=msg_text, markup=True, halign='center', theme_text_color='Primary', font_style='Subtitle1', size_hint_y=None, adaptive_height=True)
-        content.add_widget(lbl_msg)
-        buttons = [MDFlatButton(text='CORRIGER', theme_text_color='Custom', text_color=(0.5, 0.5, 0.5, 1), on_release=lambda x: [self.overpay_dialog.dismiss(), self.open_payment_dialog(None)]), MDRaisedButton(text='CONFIRMER', md_bg_color=(0, 0.7, 0, 1), text_color=(1, 1, 1, 1), elevation=2, on_release=lambda x: [self.overpay_dialog.dismiss(), self.process_transaction(paid, total)])]
-        self.overpay_dialog = MDDialog(title="Création d'un Versement", type='custom', content_cls=content, buttons=buttons)
+            msg = f"Montant saisi: {paid:.2f} DA\nTotal Facture: {total:.2f} DA\n\nL'excédent ({excess:.2f} DA) sera enregistré comme une opération séparée (VERSEMENT/RÈGLEMENT)."
+        self.overpay_dialog = MDDialog(title="Création d'un Versement", text=msg, buttons=[MDFlatButton(text='CORRIGER', on_release=lambda x: [self.overpay_dialog.dismiss(), self.open_payment_dialog(None)]), MDRaisedButton(text='CONFIRMER', md_bg_color=(0, 0.6, 0, 1), on_release=lambda x: [self.overpay_dialog.dismiss(), self.process_transaction(paid, total)])])
         self.overpay_dialog.open()
 
     def show_credit_warning(self, paid, total, remaining):
-        content = MDBoxLayout(orientation='vertical', size_hint_y=None, adaptive_height=True, spacing='15dp', padding=[0, '10dp', 0, 0])
-        lbl_info = MDLabel(text=f'[b]Montant saisi:[/b] {paid:.2f} DA\n[b]Total:[/b] {total:.2f} DA', markup=True, halign='center', theme_text_color='Primary', font_style='Body1', size_hint_y=None, adaptive_height=True)
-        content.add_widget(lbl_info)
-        msg_text = ''
         if self.current_mode in ['return_sale', 'return_purchase']:
-            msg_text = f'Vous rendez [b]{paid:.2f} DA[/b].\nLe reste [color=#D32F2F][b]({remaining:.2f} DA)[/b][/color] sera déduit de la dette du tiers.'
+            msg = f'Vous rendez {paid:.2f} DA.\nLe reste ({remaining:.2f} DA) sera déduit de la dette du tiers.'
         else:
-            msg_text = f'Le montant versé est insuffisant.\nLe reste [color=#D32F2F][b]({remaining:.2f} DA)[/b][/color] sera enregistré comme [b]CRÉDIT [/b].'
-        lbl_msg = MDLabel(text=msg_text, markup=True, halign='center', theme_text_color='Primary', font_style='Subtitle1', size_hint_y=None, adaptive_height=True)
-        content.add_widget(lbl_msg)
-        buttons = [MDFlatButton(text='ANNULER', theme_text_color='Custom', text_color=(0.5, 0.5, 0.5, 1), on_release=lambda x: self.debt_dialog.dismiss()), MDRaisedButton(text='CONFIRMER', md_bg_color=(0.8, 0, 0, 1), text_color=(1, 1, 1, 1), elevation=2, on_release=lambda x: [self.debt_dialog.dismiss(), self.process_transaction(paid, total)])]
-        self.debt_dialog = MDDialog(title='Attention: Crédit', type='custom', content_cls=content, buttons=buttons)
+            msg = f'Le montant versé ({paid:.2f} DA) est inférieur au total ({total:.2f} DA).\nLe reste ({remaining:.2f} DA) sera enregistré comme dette sur le compte.'
+        self.debt_dialog = MDDialog(title='Attention: Crédit', text=msg, buttons=[MDFlatButton(text='ANNULER', on_release=lambda x: self.debt_dialog.dismiss()), MDRaisedButton(text='CONFIRMER', md_bg_color=(0.8, 0, 0, 1), on_release=lambda x: [self.debt_dialog.dismiss(), self.process_transaction(paid, total)])])
         self.debt_dialog.open()
 
-    def process_transaction(self, paid_amount, total_amount, method=None):
+    def process_transaction(self, paid_amount, total_amount):
         if getattr(self, 'is_transaction_in_progress', False):
             return
         self.is_transaction_in_progress = True
         try:
-            doc_type_map = {'sale': 'BV', 'purchase': 'BA', 'return_sale': 'RC', 'return_purchase': 'RF', 'transfer': 'TR', 'invoice_sale': 'FC', 'invoice_purchase': 'FF', 'proforma': 'FP', 'order_purchase': 'DP'}
-            doc_type = doc_type_map.get(self.current_mode, 'BV')
-            if hasattr(self, 'original_doc_type') and self.original_doc_type == 'BI' and (self.current_mode == 'purchase'):
-                doc_type = 'BI'
-            is_invoice_mode = doc_type in ['FC', 'FF', 'FP']
-            calc_ht, calc_tva = self.calculate_cart_totals(self.cart, is_invoice_mode)
-            base_ttc = self._round_num(calc_ht + calc_tva)
-            timbre_amount = 0.0
-            method_val = method
-            if not method_val and self.current_mode == 'invoice_sale':
-                if hasattr(self, 'payment_methods') and hasattr(self, 'current_method_index'):
-                    try:
-                        method_val = self.payment_methods[self.current_method_index]['value']
-                    except:
-                        method_val = ''
-            if not method_val:
-                method_val = ''
-            if doc_type == 'FC':
-                if method_val in ['دفع نقدًا', 'Espèce']:
-                    timbre_amount = self._calculate_stamp_duty(base_ttc)
-            real_total_to_send = self._round_num(base_ttc + timbre_amount)
             excess_amount = 0
             invoice_paid_amount = paid_amount
             is_real_transaction = self.current_mode not in ['proforma', 'order_purchase', 'transfer']
-            if is_real_transaction and self.current_mode in ['sale', 'purchase', 'invoice_sale', 'invoice_purchase']:
-                if paid_amount > real_total_to_send:
-                    excess_amount = self._round_num(paid_amount - real_total_to_send)
-                    invoice_paid_amount = real_total_to_send
-                else:
-                    invoice_paid_amount = paid_amount
+            if is_real_transaction and self.current_mode in ['sale', 'purchase', 'invoice_sale', 'invoice_purchase'] and (paid_amount > total_amount):
+                excess_amount = paid_amount - total_amount
+                invoice_paid_amount = total_amount
             if is_real_transaction:
                 if self.current_mode in ['sale', 'invoice_sale']:
                     self.stat_sales_today += invoice_paid_amount
@@ -3737,8 +3247,12 @@ class StockApp(MDApp):
                     self.stat_purchases_today -= invoice_paid_amount
                 self.calculate_net_total()
                 self.save_local_stats()
+            doc_type_map = {'sale': 'BV', 'purchase': 'BA', 'return_sale': 'RC', 'return_purchase': 'RF', 'transfer': 'TR', 'invoice_sale': 'FC', 'invoice_purchase': 'FF', 'proforma': 'FP', 'order_purchase': 'DP'}
+            doc_type = doc_type_map.get(self.current_mode, 'BV')
+            if hasattr(self, 'original_doc_type') and self.original_doc_type == 'BI' and (self.current_mode == 'purchase'):
+                doc_type = 'BI'
             ent_id = self.selected_entity['id'] if self.selected_entity else None
-            payment_info = {'amount': invoice_paid_amount, 'total': real_total_to_send, 'method': method_val, 'timbre': timbre_amount}
+            payment_info = {'amount': invoice_paid_amount, 'total': total_amount}
             server_id_to_update = None
             if self.editing_transaction_key:
                 if self.editing_transaction_key == 'SERVER_EDIT_MODE':
@@ -3784,7 +3298,7 @@ class StockApp(MDApp):
                     finalize_process()
                     return
                 p_type = 'client_pay' if self.current_mode in ['sale', 'invoice_sale'] else 'supplier_pay'
-                c_label = 'Versement' if self.current_mode in ['sale', 'invoice_sale'] else 'REGLEMENT'
+                c_label = 'Versement' if self.current_mode in ['sale', 'invoice_sale'] else 'Règlement'
                 if p_type == 'client_pay':
                     self.stat_client_payments += excess_amount
                 else:
@@ -3811,14 +3325,11 @@ class StockApp(MDApp):
                     local_label = 'Versement' if self.current_mode in ['sale', 'invoice_sale'] else 'Règlement'
                     pay_data = {'entity_id': ent_id, 'amount': excess_amount, 'type': p_type, 'custom_label': local_label, 'user_name': self.current_user_name, 'is_simple_payment': True, 'timestamp': str(datetime.now())}
                     self.save_to_history(pay_data, synced=False)
-                    change = -float(excess_amount)
-                    self.update_local_entity_balance(ent_id, change)
                 self.is_transaction_in_progress = False
                 self.save_offline_and_ui(data)
         except Exception as e:
             self.is_transaction_in_progress = False
-            self.notify(f'Erreur fatale: {e}', 'error')
-            print(f'CRASH ERROR: {e}')
+            self.notify(f'Erreur process: {e}', 'error')
 
     def on_submit_success_ui(self):
         self.notify('Succès ✅', 'success')
@@ -3842,16 +3353,11 @@ class StockApp(MDApp):
         try:
             doc_type = data.get('doc_type', 'BV')
             if doc_type not in ['TR', 'FP', 'DP', 'BI'] and data.get('entity_id'):
-                is_invoice_doc = doc_type in ['FC', 'FF']
-                ht, tva = self.calculate_cart_totals(data.get('items', []), is_invoice_doc)
-                total_amount = self._round_num(ht + tva)
-                if is_invoice_doc:
-                    payment_info = data.get('payment_info', {})
-                    total_amount = self._round_num(total_amount + float(payment_info.get('timbre', 0)))
+                total_amount = sum((float(i.get('price', 0)) * float(i.get('qty', 0)) for i in data.get('items', [])))
                 balance_sign = -1 if doc_type in ['RC', 'RF'] else 1
                 payment_info = data.get('payment_info', {})
                 paid_amount = float(payment_info.get('amount', 0))
-                net_change = self._round_num(total_amount * balance_sign - paid_amount)
+                net_change = total_amount * balance_sign - paid_amount
                 self.update_local_entity_balance(data['entity_id'], net_change)
         except Exception as e:
             print(f'Error calculating offline balance update: {e}')
@@ -3932,7 +3438,7 @@ class StockApp(MDApp):
                 amount = float(data.get('amount', 0))
             else:
                 try:
-                    amount = sum((float(i.get('price', 0)) * float(i.get('qty', 0)) * (1 + float(i.get('tva', 0)) / 100) for i in data.get('items', [])))
+                    amount = sum((float(i['price']) * float(i['qty']) for i in data.get('items', [])))
                 except:
                     amount = 0
             full_doc_name = ''
@@ -3949,17 +3455,12 @@ class StockApp(MDApp):
             elif is_simple_payment:
                 p_type = data.get('type', 'client_pay')
                 if amount >= 0:
-                    if p_type == 'supplier_pay':
-                        full_doc_name = 'Règlement'
-                        icon_name = 'cash-refund'
-                        icon_color = (1, 0.6, 0, 1)
-                    else:
-                        full_doc_name = 'Versement'
-                        icon_name = 'cash-plus'
-                        icon_color = (0, 0.7, 0, 1)
+                    full_doc_name = 'Règlement' if p_type == 'supplier_pay' else 'Versement'
+                    icon_name = 'cash-plus'
+                    icon_color = (0, 0.7, 0, 1)
                     amount_text = f'+ {abs(amount):.2f} DA'
                 else:
-                    full_doc_name = 'Crédit / Dette'
+                    full_doc_name = 'Crédit'
                     icon_name = 'notebook-edit'
                     icon_color = (0.8, 0, 0, 1)
                     amount_text = f'- {abs(amount):.2f} DA'
@@ -3967,16 +3468,6 @@ class StockApp(MDApp):
                 full_doc_name = self.DOC_TRANSLATIONS.get(doc_type, doc_type)
                 if doc_type == 'RC':
                     icon_color = (0.8, 0, 0, 1)
-                    icon_name = 'keyboard-return'
-                    bg_col = (1, 0.95, 0.95, 1)
-                elif doc_type == 'BA':
-                    icon_color = (1, 0.6, 0, 1)
-                    icon_name = 'truck'
-                elif doc_type == 'BV':
-                    icon_name = 'cart'
-                elif doc_type == 'RF':
-                    icon_name = 'undo'
-                    icon_color = (0, 0.6, 0.6, 1)
             header_text = f'{full_doc_name} - {entity_name}'
             self.history_rv_data.append({'raw_text': header_text, 'raw_sec': f'Local • {dt_str} • (Non Sync)', 'amount_text': amount_text, 'icon': icon_name, 'icon_color': icon_color, 'bg_color': bg_col, 'is_local': True, 'key': k, 'raw_data': None})
         self.rv_history.data = self.history_rv_data
@@ -3999,7 +3490,7 @@ class StockApp(MDApp):
             if self.is_seller_mode:
                 is_allowed_doc = prefix in ['BV', 'RC']
                 is_client_money = any((k in desc_lower for k in ['versement', 'client', 'تحصيل', 'دفعة', 'encaissement']))
-                if not (is_allowed_doc or is_client_money or prefix not in main_doc_prefixes):
+                if not (is_allowed_doc or is_client_money):
                     continue
             is_transfer = item.get('is_transfer', False)
             amount = float(item.get('amount', 0))
@@ -4016,15 +3507,19 @@ class StockApp(MDApp):
                 entity_display = 'COMPTOIR'
             is_main_doc = prefix in main_doc_prefixes or is_transfer
             has_doc_ref = any((ref in desc for ref in main_doc_prefixes))
-            if not is_main_doc and has_doc_ref:
+            if is_main_doc:
+                pass
+            elif has_doc_ref:
                 continue
-            elif amount == 0 and (not is_transfer):
+            elif amount == 0:
                 continue
             full_doc_name = self.DOC_TRANSLATIONS.get(prefix, desc)
             bg_col = (0.95, 0.98, 1, 1)
             icon_name = 'file-document'
             icon_color = (0, 0.5, 0.8, 1)
             amount_text = f'{abs(amount):.2f} DA'
+            is_reglement_kw = any((k in desc_lower for k in ['règlement', 'reglement', 'سداد', 'supplier pay']))
+            is_versement_kw = any((k in desc_lower for k in ['versement', 'تحصيل', 'دفعة', 'client pay']))
             if is_transfer:
                 full_doc_name = 'Transfert Stock'
                 icon_name = 'compare-horizontal'
@@ -4032,19 +3527,13 @@ class StockApp(MDApp):
                 amount_text = 'Stock'
                 icon_color = (0.5, 0, 0.5, 1)
             elif not is_main_doc:
-                if amount < 0:
-                    is_reglement_kw = any((k in desc_lower for k in ['règlement', 'reglement', 'سداد', 'supplier']))
-                    if is_reglement_kw:
-                        full_doc_name = 'Règlement'
-                        icon_name = 'cash-refund'
-                        icon_color = (1, 0.6, 0, 1)
-                    else:
-                        full_doc_name = 'Versement'
-                        icon_name = 'cash-plus'
-                        icon_color = (0, 0.7, 0, 1)
+                if amount < 0 or is_versement_kw or is_reglement_kw:
+                    full_doc_name = 'Règlement' if is_reglement_kw else 'Versement'
+                    icon_name = 'cash-plus'
+                    icon_color = (0, 0.7, 0, 1)
                     amount_text = f'+ {abs(amount):.2f} DA'
                 else:
-                    full_doc_name = 'Crédit / Dette'
+                    full_doc_name = 'Crédit'
                     icon_name = 'notebook-edit'
                     icon_color = (0.8, 0, 0, 1)
                     amount_text = f'- {abs(amount):.2f} DA'
@@ -4153,12 +3642,11 @@ class StockApp(MDApp):
                 doc_type = data.get('doc_type', 'BV')
                 self.original_doc_type = doc_type
                 mode_map = {'BV': 'sale', 'BA': 'purchase', 'RC': 'return_sale', 'RF': 'return_purchase', 'TR': 'transfer', 'FC': 'invoice_sale', 'FP': 'proforma', 'FF': 'invoice_purchase', 'DP': 'order_purchase', 'BI': 'purchase'}
+                
+                # التعديل هنا: تمرير skip_dialog=True لتخطي اختيار الزبون
                 self.open_mode(mode_map.get(doc_type, 'sale'), skip_dialog=True)
-                raw_items = data.get('items', [])
-                self.cart = []
-                for item in raw_items:
-                    item['tva'] = float(item.get('tva', 0))
-                    self.cart.append(item)
+                
+                self.cart = data.get('items', [])
                 saved_loc = data.get('purchase_location')
                 if not saved_loc:
                     saved_loc = data.get('location', 'store')
@@ -4189,7 +3677,6 @@ class StockApp(MDApp):
                     self.editing_payment_amount = float(payment_info.get('amount', 0))
                 except:
                     self.editing_payment_amount = 0
-                self.editing_payment_method = payment_info.get('method', '')
                 self.update_cart_button()
                 self.open_cart_screen(None)
             except Exception as e:
@@ -4231,41 +3718,22 @@ class StockApp(MDApp):
             scroll = MDScrollView()
             lst = MDList()
             items = data.get('items', [])
-            total_items = 0.0
-            doc_type = data.get('doc_type', 'BV')
+            total = 0
             for item in items:
                 p = float(item.get('price', 0))
                 q = float(item.get('qty', 0))
-                t = float(item.get('tva', 0))
-                sub_ttc = p * q * (1 + t / 100)
-                total_items += sub_ttc
-                qty_disp = int(q) if q.is_integer() else q
-                details = f'{p:.2f} DA x {qty_disp}'
-                if t > 0 and doc_type in ['FC', 'FF', 'FP']:
-                    details += f' [color=#FF0000](+{int(t)}% TVA)[/color]'
-                li = ThreeLineAvatarIconListItem(text=item.get('name', 'Produit'), secondary_text=details, tertiary_text=f'Total: {sub_ttc:.2f} DA')
+                sub = p * q
+                total += sub
+                li = ThreeLineAvatarIconListItem(text=item.get('name', 'Produit'), secondary_text=f'{p:.2f} DA x {(int(q) if q.is_integer() else q)}', tertiary_text=f'Total: {sub:.2f} DA')
                 li.add_widget(IconLeftWidget(icon='package-variant'))
                 lst.add_widget(li)
             scroll.add_widget(lst)
-            content.add_widget(scroll)
-            payment_info = data.get('payment_info', {})
-            method = payment_info.get('method', '')
-            timbre = 0.0
-            if doc_type == 'FC':
-                if method in ['دفع نقدًا', 'Espèce']:
-                    timbre = self._calculate_stamp_duty(total_items)
-            final_total = total_items + timbre
-            box_totals = MDBoxLayout(orientation='vertical', adaptive_height=True, padding=[0, 10, 0, 0])
-            box_totals.add_widget(MDLabel(text=f'Total Articles: {total_items:.2f} DA', halign='right', font_style='Subtitle1'))
-            if timbre > 0:
-                box_totals.add_widget(MDLabel(text=f'Droit de Timbre: {timbre:.2f} DA', halign='right', font_style='Caption', theme_text_color='Custom', text_color=(0.5, 0, 0.5, 1), bold=True))
-            box_totals.add_widget(MDLabel(text=f'NET À PAYER: {final_total:.2f} DA', halign='center', font_style='H5', bold=True, theme_text_color='Primary'))
-            content.add_widget(box_totals)
+            content.add_widget(MDLabel(text=f'TOTAL: {total:.2f} DA', halign='center', font_style='H5', bold=True, size_hint_y=None, height=dp(40)))
 
         def do_print(x):
             threading.Thread(target=self.print_ticket_bluetooth, args=(data,), daemon=True).start()
         buttons = [MDRaisedButton(text='IMPRIMER', on_release=do_print), MDFlatButton(text='FERMER', on_release=lambda x: x.parent.parent.parent.parent.dismiss())]
-        MDDialog(title='Détails (Synchronisé/Local)', type='custom', content_cls=content, size_hint=(0.95, 0.95), buttons=buttons).open()
+        MDDialog(title='Détails (Synchronisé)', type='custom', content_cls=content, size_hint=(0.95, 0.95), buttons=buttons).open()
 
     def handle_server_history_item(self, item_data):
         if self.pending_dialog:
@@ -4285,197 +3753,133 @@ class StockApp(MDApp):
         UrlRequest(url, on_success=on_success_callback, on_failure=lambda r, e: self.notify('Erreur chargement détails', 'error'), on_error=lambda r, e: self.notify('Erreur connexion', 'error'))
 
     def show_server_transaction_details(self, header_data, result):
-        from kivymd.uix.boxlayout import MDBoxLayout
-        from kivymd.uix.label import MDLabel
-        from kivymd.uix.card import MDCard
-        from kivymd.uix.button import MDFillRoundFlatButton, MDFlatButton
-        from kivymd.uix.list import MDList, OneLineListItem, ThreeLineListItem
         items = result.get('items', [])
         real_paid_amount = result.get('paid_amount')
         if real_paid_amount is None:
             real_paid_amount = header_data.get('paid_amount', 0)
         header_data['paid_amount'] = real_paid_amount
-        paid_val = float(real_paid_amount)
+        paid_val = real_paid_amount
         is_transfer = header_data.get('is_transfer', False)
         raw_entity_name = str(header_data.get('entity', ''))
         entity_name = raw_entity_name.replace('➔', ' -> ').replace('\uf0e0', ' -> ').replace('\uf0da', ' -> ')
         if is_transfer:
             lower_raw = raw_entity_name.lower()
-            if 'dép' in lower_raw and 'mag' in lower_raw:
-                entity_name = 'Dépôt -> Magasin' if lower_raw.find('dép') < lower_raw.find('mag') else 'Magasin -> Dépôt'
+            idx_dep = lower_raw.find('dép')
+            idx_mag = lower_raw.find('mag')
+            if idx_dep != -1 and idx_mag != -1:
+                if idx_dep < idx_mag:
+                    entity_name = 'Dépôt -> Magasin'
+                else:
+                    entity_name = 'Magasin -> Dépôt'
             elif 'dép' in lower_raw:
                 entity_name = 'Dépôt -> Magasin'
             elif 'mag' in lower_raw:
                 entity_name = 'Magasin -> Dépôt'
         auto_pay_names = ['COMPTOIR', 'Comptoir', 'زبون افتراضي', 'مورد افتراضي', 'DEFAULT_CUSTOMER']
         is_comptoir = any((n in entity_name for n in auto_pay_names))
-        content = MDBoxLayout(orientation='vertical', spacing=10, size_hint_y=None, height=dp(550))
+        content_height = dp(500)
+        content = MDBoxLayout(orientation='vertical', spacing=10, size_hint_y=None, height=content_height)
         prefix = header_data['desc'][:2]
         full_desc = header_data.get('desc', '').lower()
         amount = float(header_data.get('amount', 0))
-        calculated_items_total = 0.0
-        for item in items:
-            p = float(item.get('price', 0))
-            q = float(item.get('qty', 0))
-            t = float(item.get('tva', 0))
-            line_ht = self._round_num(p * q)
-            line_ttc = self._round_num(line_ht * (1 + t / 100.0))
-            calculated_items_total += line_ttc
-        calculated_items_total = self._round_num(calculated_items_total)
-        diff_val = self._round_num(abs(amount) - calculated_items_total)
-        timbre_to_show = 0.0
-        if prefix in ['FC', 'FF'] and diff_val > 0.5:
-            timbre_to_show = diff_val
-        display_total = self._round_num(calculated_items_total + timbre_to_show)
+        is_versement_kw = any((k in full_desc for k in ['versement', 'تحصيل', 'دفعة']))
         is_reglement_kw = any((k in full_desc for k in ['règlement', 'reglement', 'سداد']))
         main_docs = ['BV', 'BA', 'RC', 'RF', 'TR', 'FP', 'FC', 'FF', 'DP', 'BI']
-        is_financial_op = False
         if not prefix in main_docs:
-            if amount < 0:
-                type_str = 'Règlement' if is_reglement_kw else 'Versement'
+            if amount < 0 or is_versement_kw or is_reglement_kw:
+                if is_reglement_kw:
+                    type_str = 'Règlement'
+                else:
+                    type_str = 'Versement'
                 amount_color = (0, 0.7, 0, 1)
                 display_amount_str = f'+ {abs(amount):.2f} DA'
+                is_financial_op = True
             else:
-                type_str = 'Crédit / Dette'
+                type_str = 'Crédit'
                 amount_color = (0.8, 0, 0, 1)
                 display_amount_str = f'- {abs(amount):.2f} DA'
-            is_financial_op = True
+                is_financial_op = True
         else:
             type_str = self.DOC_TRANSLATIONS.get(prefix, 'Opération')
             amount_color = (0, 0, 0, 1)
-            display_amount_str = f'{display_total:.2f} DA'
-        header_box = MDCard(orientation='vertical', adaptive_height=True, padding=dp(10), md_bg_color=(0.95, 0.95, 0.95, 1), radius=[10])
-        header_box.add_widget(MDLabel(text=self.fix_text(f'{type_str} - {entity_name}'), bold=True, font_style='Subtitle1', adaptive_height=True))
-        header_box.add_widget(MDLabel(text=f"Date: {header_data.get('time', '')}", font_style='Caption', adaptive_height=True))
+            display_amount_str = f'{abs(amount):.2f} DA'
+            is_financial_op = False
+        header_height = dp(110) if not is_transfer else dp(80)
+        header_box = MDCard(orientation='vertical', size_hint_y=None, height=header_height, padding=dp(10), md_bg_color=(0.95, 0.95, 0.95, 1), radius=[10])
+        header_text = self.fix_text(f'{type_str} - {entity_name}')
+        header_box.add_widget(MDLabel(text=header_text, bold=True, font_style='Subtitle1'))
+        header_box.add_widget(MDLabel(text=f"Date: {header_data['time']}", font_style='Caption'))
         if not is_transfer:
-            header_box.add_widget(MDLabel(text=f'Montant: {display_amount_str}', theme_text_color='Custom', text_color=amount_color, bold=True, font_style='H5', adaptive_height=True))
-            if timbre_to_show > 0:
-                header_box.add_widget(MDLabel(text=f'Droit de Timbre: {timbre_to_show:.2f} DA', theme_text_color='Custom', text_color=(0.5, 0, 0.5, 1), bold=True, font_style='Caption', adaptive_height=True))
-            if not is_financial_op and prefix not in ['FP', 'DP']:
-                paid_float = paid_val if not is_comptoir else display_total
-                diff = self._round_num(display_total - paid_float)
-                if abs(diff) < 0.05:
-                    pay_row = MDBoxLayout(orientation='horizontal', adaptive_height=True, spacing=dp(5))
-                    pay_row.add_widget(MDLabel(text='Payée', theme_text_color='Custom', text_color=(0, 0.6, 0, 1), bold=True, font_style='Subtitle1', adaptive_size=True))
-                    pay_row.add_widget(MDIcon(icon='check-circle', theme_text_color='Custom', text_color=(0, 0.6, 0, 1), font_size='20sp', pos_hint={'center_y': 0.5}))
-                    header_box.add_widget(pay_row)
+            header_box.add_widget(MDLabel(text=f'Montant: {display_amount_str}', theme_text_color='Custom', text_color=amount_color, bold=True, font_style='H5'))
+            if not is_financial_op:
+                total_doc = float(abs(amount))
+                if is_comptoir:
+                    paid_val = total_doc
+                diff = total_doc - float(paid_val)
+                money_row = MDBoxLayout(orientation='horizontal', size_hint_y=None, height=dp(20))
+                money_row.add_widget(MDLabel(text=f'Versé: {float(paid_val):.2f} DA', theme_text_color='Custom', text_color=(0, 0.6, 0, 1), bold=True))
+                if is_comptoir:
+                    lbl_reste_text = 'Payée ✅'
+                    lbl_reste_color = (0, 0.6, 0, 1)
                 else:
-                    header_box.add_widget(MDLabel(text=f'Versé: {paid_float:.2f} DA', theme_text_color='Custom', text_color=(0, 0.6, 0, 1), bold=True, font_style='Subtitle1', adaptive_height=True))
-                    if diff > 0.05:
-                        header_box.add_widget(MDLabel(text=f'Crédit: {diff:.2f} DA', theme_text_color='Custom', text_color=(0.8, 0, 0, 1), bold=True, font_style='Subtitle1', adaptive_height=True))
+                    lbl_reste_text = f'Crédit: {diff:.2f} DA' if diff > 0 else f'Rendu: {abs(diff):.2f} DA'
+                    lbl_reste_color = (0.8, 0, 0, 1) if diff > 0 else (0, 0.6, 0, 1)
+                money_row.add_widget(MDLabel(text=lbl_reste_text, theme_text_color='Custom', text_color=lbl_reste_color, bold=True, halign='right'))
+                header_box.add_widget(money_row)
         else:
-            header_box.add_widget(MDLabel(text='Transfert de stock', font_style='Caption', theme_text_color='Hint', adaptive_height=True))
+            header_box.add_widget(MDLabel(text='Transfert de stock', font_style='Caption', theme_text_color='Hint'))
         content.add_widget(header_box)
         content.add_widget(MDLabel(text='Détails:', font_style='Caption', size_hint_y=None, height=dp(20)))
         scroll = MDScrollView()
         list_layout = MDList()
-        if items:
-            for item in items:
-                qty = float(item.get('qty', 0))
-                qty_str = str(int(qty)) if qty.is_integer() else str(qty)
-                price = float(item.get('price', 0))
-                total_line = qty * price
-                list_layout.add_widget(ThreeLineListItem(text=self.fix_text(item.get('name', '')), secondary_text=f'{qty_str} x {price:.2f} DA', tertiary_text=f'Total: {total_line:.2f} DA'))
+        if not items:
+            msg = 'Opération financière' if is_financial_op else 'Aucun article'
+            list_layout.add_widget(OneLineListItem(text=msg))
         else:
-            list_layout.add_widget(OneLineListItem(text='Aucun article ou opération financière'))
+            for item in items:
+                qty_display = int(item['qty']) if item['qty'].is_integer() else item['qty']
+                item_name = self.fix_text(item['name'])
+                if is_transfer:
+                    li = TwoLineAvatarIconListItem(text=item_name, secondary_text=f'[color=#0000FF][b][size=18sp]Qté: {qty_display}[/size][/b][/color]')
+                    li.add_widget(IconLeftWidget(icon='transfer'))
+                else:
+                    total_item = item['price'] * item['qty']
+                    li = ThreeLineAvatarIconListItem(text=item_name, secondary_text=f"[b][size=16sp]{item['price']:.2f} DA x {qty_display}[/size][/b]", tertiary_text=f'Total: {total_item:.2f} DA')
+                    li.add_widget(IconLeftWidget(icon='package-variant-closed'))
+                list_layout.add_widget(li)
         scroll.add_widget(list_layout)
         content.add_widget(scroll)
-        actions_layout = MDBoxLayout(orientation='vertical', spacing='10dp', adaptive_height=True, padding=[0, '15dp', 0, 0])
-        top_row = MDBoxLayout(orientation='horizontal', spacing='10dp', size_hint_y=None, height='50dp')
-        pdf_only_types = ['FC', 'FP', 'FF', 'DP']
-        mixed_types = ['BA', 'BV', 'TR', 'RC', 'RF']
-        if prefix not in pdf_only_types:
-
-            def do_print_bt(x):
-                print_data = header_data.copy()
-                print_data['items'] = items
-                print_data['doc_type'] = prefix
-                threading.Thread(target=self.print_ticket_bluetooth, args=(print_data,), daemon=True).start()
-            btn_print = MDFillRoundFlatButton(text='IMPRIMER', md_bg_color=(0, 0.5, 0.8, 1), text_color=(1, 1, 1, 1), size_hint_x=1, on_release=do_print_bt)
-            top_row.add_widget(btn_print)
-        if prefix in pdf_only_types or prefix in mixed_types:
-            btn_text = 'PDF' if prefix in mixed_types else 'TELECHARGER PDF'
-            btn_pdf = MDFillRoundFlatButton(text=btn_text, md_bg_color=(0.8, 0.2, 0.2, 1), text_color=(1, 1, 1, 1), size_hint_x=1, on_release=lambda x: self.download_server_pdf(header_data.get('id'), prefix, header_data.get('desc', '')))
-            top_row.add_widget(btn_pdf)
         try:
+            item_date_str = str(header_data.get('time', '')).split(' ')[0]
             today_str = str(datetime.now().date())
-            is_today = str(header_data.get('time', '')).split(' ')[0] == today_str
+            is_today = item_date_str == today_str
         except:
             is_today = False
-        can_edit = not self.is_seller_mode or is_today
-        if can_edit:
-            btn_edit = MDFillRoundFlatButton(text='MODIFIER', md_bg_color=(0, 0.6, 0.4, 1), text_color=(1, 1, 1, 1), size_hint_x=1, on_release=lambda x: self.load_server_transaction_for_edit(header_data, items))
+        can_edit = True
+        if self.is_seller_mode and (not is_today):
+            can_edit = False
+
+        def do_print(x):
+            print_data = {'server_id': header_data.get('id'), 'invoice_number': header_data.get('desc'), 'timestamp': header_data.get('time'), 'user_name': header_data.get('user'), 'entity': header_data.get('entity'), 'entity_id': header_data.get('entity_id'), 'amount': header_data.get('amount'), 'doc_type': prefix, 'items': items, 'is_simple_payment': is_financial_op, 'type': 'client_pay' if amount > 0 else 'credit', 'payment_info': {'amount': paid_val}}
+            threading.Thread(target=self.print_ticket_bluetooth, args=(print_data,), daemon=True).start()
+        actions_layout = MDBoxLayout(orientation='vertical', spacing='10dp', adaptive_height=True, padding=[0, '15dp', 0, 0])
+        top_row = MDBoxLayout(orientation='horizontal', spacing='10dp', size_hint_y=None, height='50dp')
+        show_edit = can_edit
+        print_width = 0.5 if show_edit else 1.0
+        btn_print = MDFillRoundFlatButton(text='IMPRIMER', md_bg_color=(0, 0.5, 0.8, 1), text_color=(1, 1, 1, 1), font_style='Button', size_hint_x=print_width, on_release=do_print)
+        top_row.add_widget(btn_print)
+        if show_edit:
+            btn_edit = MDFillRoundFlatButton(text='MODIFIER', md_bg_color=(0, 0.6, 0.4, 1), text_color=(1, 1, 1, 1), font_style='Button', size_hint_x=0.5, on_release=lambda x: self.load_server_transaction_for_edit(header_data, items))
             top_row.add_widget(btn_edit)
         actions_layout.add_widget(top_row)
         if can_edit:
-            btn_del = MDFlatButton(text='SUPPRIMER CETTE OPÉRATION', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), size_hint_x=1, on_release=lambda x: self.confirm_delete_server_transaction(header_data))
-            actions_layout.add_widget(btn_del)
+            btn_delete = MDFlatButton(text='SUPPRIMER CETTE OPÉRATION', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), font_style='Button', size_hint_x=1, on_release=lambda x: self.confirm_delete_server_transaction(header_data))
+            actions_layout.add_widget(btn_delete)
         else:
             actions_layout.add_widget(MDLabel(text='Modification impossible (Date passée)', halign='center', theme_text_color='Error', font_style='Caption', adaptive_height=True))
         content.add_widget(actions_layout)
         self.srv_dialog = MDDialog(title='Détails', type='custom', content_cls=content, size_hint=(0.95, 0.95), buttons=[MDFlatButton(text='FERMER', on_release=lambda x: self.srv_dialog.dismiss())])
         self.srv_dialog.open()
-
-    def download_server_pdf(self, trans_id, doc_type, file_name_hint):
-        if not self.is_server_reachable:
-            self.notify('Non connecté au serveur', 'error')
-            return
-        self.notify('Génération du PDF...', 'info')
-        safe_name = str(file_name_hint).replace('/', '_').replace('\\', '_').replace(':', '-')
-        url = f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/download_pdf?id={trans_id}&type={doc_type}'
-        file_path = ''
-        try:
-            if platform == 'android':
-                from android.storage import primary_external_storage_path
-                dir_path = os.path.join(primary_external_storage_path(), 'Download')
-            else:
-                dir_path = os.path.join(os.environ['USERPROFILE'], 'Downloads')
-            if not os.path.exists(dir_path):
-                os.makedirs(dir_path)
-            file_path = os.path.join(dir_path, f'{safe_name}.pdf')
-        except Exception as e:
-            print(f'Path Error: {e}')
-            self.notify('Erreur de chemin', 'error')
-            return
-
-        def on_success(req, result):
-            try:
-                with open(file_path, 'wb') as f:
-                    f.write(result)
-                self.pdf_success_dialog = MDDialog(title='Téléchargement Terminé', text=f'Le fichier PDF a été enregistré avec succès dans le dossier Téléchargements.', buttons=[MDRaisedButton(text='OK', md_bg_color=(0, 0.7, 0, 1), text_color=(1, 1, 1, 1), on_release=lambda x: self.pdf_success_dialog.dismiss())])
-                self.pdf_success_dialog.open()
-            except Exception as e:
-                self.notify(f'Erreur sauvegarde: {e}', 'error')
-
-        def on_fail(req, err):
-            self.notify('Erreur téléchargement', 'error')
-        UrlRequest(url, on_success=on_success, on_failure=on_fail, on_error=on_fail)
-
-    def open_pdf_file(self, file_path):
-        if platform != 'android':
-            try:
-                os.startfile(file_path)
-            except:
-                pass
-            return
-        try:
-            from jnius import autoclass, cast
-            from android import activity
-            File = autoclass('java.io.File')
-            Intent = autoclass('android.content.Intent')
-            FileProvider = autoclass('androidx.core.content.FileProvider')
-            Context = autoclass('android.content.Context')
-            file_obj = File(file_path)
-            package_name = activity.getPackageName()
-            uri = FileProvider.getUriForFile(Context.getApplicationContext(), f'{package_name}.fileprovider', file_obj)
-            intent = Intent(Intent.ACTION_VIEW)
-            intent.setDataAndType(uri, 'application/pdf')
-            intent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            current_activity = cast('android.app.Activity', activity)
-            current_activity.startActivity(intent)
-        except Exception as e:
-            print(f'PDF Open Error: {e}')
-            self.notify("Impossible d'ouvrir le fichier PDF", 'error')
 
     def confirm_delete_server_transaction(self, item_data):
         is_transfer = item_data.get('is_transfer', False)
@@ -4553,7 +3957,10 @@ class StockApp(MDApp):
             else:
                 self.notify("Type d'opération non modifiable", 'error')
                 return
+        
+        # التعديل هنا: تمرير skip_dialog=True
         self.open_mode(mode, skip_dialog=True)
+        
         if prefix == 'BI':
             self.original_doc_type = 'BI'
         if found_entity:
@@ -4588,18 +3995,13 @@ class StockApp(MDApp):
             self.btn_ent_screen.text = f'{src}  >>>  {dst}'
         self.cart = []
         for item in items:
-            self.cart.append({'id': item['id'], 'name': item['name'], 'price': float(item['price']), 'qty': float(item['qty']), 'tva': float(item.get('tva', 0))})
+            self.cart.append({'id': item['id'], 'name': item['name'], 'price': item['price'], 'qty': item['qty']})
         self.editing_transaction_key = 'SERVER_EDIT_MODE'
         self.current_editing_server_id = header_data['id']
         try:
             self.editing_payment_amount = float(header_data.get('paid_amount', 0))
         except:
             self.editing_payment_amount = 0
-        payment_info = header_data.get('payment_info', {})
-        method = payment_info.get('method', '')
-        if not method:
-            method = header_data.get('payment_method', '')
-        self.editing_payment_method = method
         self.update_cart_button()
         self.notify('Modification: Données chargées', 'success')
         self.open_cart_screen()
@@ -4614,8 +4016,6 @@ class StockApp(MDApp):
             self.editing_transaction_key = None
             self.current_editing_server_id = None
             self.editing_payment_amount = None
-            if hasattr(self, 'editing_payment_method'):
-                del self.editing_payment_method
             if self.search_field:
                 self.search_field.text = ''
             self.cart = []
@@ -4748,10 +4148,6 @@ class StockApp(MDApp):
         self.dup_dialog.open()
 
     def update_scan_list_ui(self):
-        from kivymd.uix.card import MDCard
-        from kivymd.uix.boxlayout import MDBoxLayout
-        from kivymd.uix.label import MDLabel
-        from kivymd.uix.button import MDIconButton
         self.scan_list_widget.clear_widgets()
         count = len(self.temp_scanned_cart)
         self.lbl_scan_count.text = f'Articles scannés: {count}'
@@ -4764,7 +4160,8 @@ class StockApp(MDApp):
                 customer_cat = 'Gros'
             elif raw_cat in ['Demi-Gros', 'نصف جملة']:
                 customer_cat = 'Demi-Gros'
-        for prod in reversed(self.temp_scanned_cart):
+        for index, prod in enumerate(reversed(self.temp_scanned_cart)):
+            real_number = count - index
             prod_name = self.fix_text(prod.get('name', 'Inconnu'))
             final_price = float(prod.get('price', 0) or 0)
             if customer_cat == 'Gros':
@@ -4775,18 +4172,12 @@ class StockApp(MDApp):
                 p_semi = float(prod.get('price_semi', 0) or 0)
                 if p_semi > 0:
                     final_price = p_semi
-            card = MDCard(orientation='horizontal', size_hint_y=None, height=dp(75), padding=[dp(15), 0, 0, 0], radius=[0], elevation=0, md_bg_color=(1, 1, 1, 1))
-            text_box = MDBoxLayout(orientation='vertical', pos_hint={'center_y': 0.5}, adaptive_height=True, spacing=dp(4))
-            lbl_name = MDLabel(text=prod_name, font_style='Subtitle1', theme_text_color='Primary', shorten=False, max_lines=2, halign='left', adaptive_height=True)
-            lbl_price = MDLabel(text=f'Prix: {final_price:.2f} DA', font_style='Caption', theme_text_color='Secondary', bold=True, halign='left', adaptive_height=True)
-            text_box.add_widget(lbl_name)
-            text_box.add_widget(lbl_price)
-            del_btn = MDIconButton(icon='delete', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), pos_hint={'center_y': 0.5}, icon_size='24sp', on_release=lambda x, p=prod: self.remove_temp_item(p))
-            card.add_widget(text_box)
-            card.add_widget(del_btn)
-            sep = MDBoxLayout(size_hint_y=None, height=dp(1), md_bg_color=(0.95, 0.95, 0.95, 1))
-            self.scan_list_widget.add_widget(card)
-            self.scan_list_widget.add_widget(sep)
+            item = TwoLineAvatarIconListItem(text=f'[b]{real_number}.[/b] {prod_name}', secondary_text=f'Prix: {final_price:.2f} DA', theme_text_color='Custom', text_color=(0, 0, 0, 1))
+            icon_box = IconLeftWidget(icon='cube-outline')
+            item.add_widget(icon_box)
+            del_btn = IconRightWidget(icon='delete', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), on_release=lambda x, p=prod: self.remove_temp_item(p))
+            item.add_widget(del_btn)
+            self.scan_list_widget.add_widget(item)
 
     def show_not_found_alert(self, code):
         if hasattr(self, 'is_showing_alert') and self.is_showing_alert:
