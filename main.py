@@ -453,6 +453,7 @@ class StockApp(MDApp):
         rv_data = []
         is_sale = self.current_mode in ['sale', 'return_sale', 'invoice_sale', 'proforma']
         is_transfer = self.current_mode == 'transfer'
+        allowed_autre_modes = ['sale', 'invoice_sale', 'proforma', 'order_purchase']
 
         def fmt_qty(val):
             try:
@@ -464,6 +465,10 @@ class StockApp(MDApp):
                 return '0'
         try:
             for p in batch:
+                prod_name_lower = str(p.get('name', '')).lower()
+                if prod_name_lower.startswith('autre article'):
+                    if self.current_mode not in allowed_autre_modes:
+                        continue
                 s_store = float(p.get('stock', 0) or 0)
                 s_wh = float(p.get('stock_warehouse', 0) or 0)
                 total_stock = s_store + s_wh
@@ -522,14 +527,6 @@ class StockApp(MDApp):
             self.rv_products.refresh_from_data()
         self.is_loading_more = False
 
-    def _search_worker(self, query):
-        if not query:
-            self.prepare_products_for_rv(self.all_products_raw)
-            return
-        txt = query.lower()
-        filtered = [p for p in self.all_products_raw if txt in str(p.get('name', '')).lower() or txt in str(p.get('barcode', '')).lower() or txt in str(p.get('product_ref', '')).lower()]
-        self.prepare_products_for_rv(filtered)
-
     def filter_products(self, instance, text):
         query = instance.get_value() if hasattr(instance, 'get_value') else text
         if self._search_event:
@@ -543,8 +540,20 @@ class StockApp(MDApp):
         if not query:
             self._prepare_and_send_data(self.all_products_raw[:50])
             return
-        txt = query.lower()
-        filtered = [p for p in self.all_products_raw if txt in str(p.get('name', '')).lower() or txt in str(p.get('barcode', '')).lower() or txt in str(p.get('product_ref', '')).lower()]
+        query_clean = query.lower().strip()
+        tokens = query_clean.split()
+        filtered = []
+        for p in self.all_products_raw:
+            p_name = str(p.get('name', '')).lower()
+            is_match_name = True
+            for token in tokens:
+                if token not in p_name:
+                    is_match_name = False
+                    break
+            p_bar = str(p.get('barcode', '')).lower()
+            p_ref = str(p.get('product_ref', '')).lower()
+            if is_match_name or query_clean in p_bar or query_clean in p_ref:
+                filtered.append(p)
         if len(filtered) > 50:
             filtered = filtered[:50]
         self._prepare_and_send_data(filtered)
@@ -553,6 +562,7 @@ class StockApp(MDApp):
         rv_data = []
         is_sale = self.current_mode in ['sale', 'return_sale', 'invoice_sale', 'proforma']
         is_transfer = self.current_mode == 'transfer'
+        allowed_autre_modes = ['sale', 'invoice_sale', 'proforma', 'order_purchase']
 
         def fmt_qty(val):
             try:
@@ -564,6 +574,10 @@ class StockApp(MDApp):
                 return '0'
         try:
             for p in products_list:
+                prod_name_lower = str(p.get('name', '')).lower()
+                if prod_name_lower.startswith('autre article'):
+                    if self.current_mode not in allowed_autre_modes:
+                        continue
                 s_store = float(p.get('stock', 0) or 0)
                 s_wh = float(p.get('stock_warehouse', 0) or 0)
                 total_stock = s_store + s_wh
@@ -1423,15 +1437,25 @@ class StockApp(MDApp):
                 return
             target_name = self.history_target_entity['name'].lower()
             main_doc_prefixes = ['BV', 'BA', 'FC', 'FF', 'RC', 'RF', 'FP', 'DP', 'BI', 'TR']
+            manual_keywords = ['versement', 'règlement', 'reglement', 'crédit', 'credit', 'dette', 'سداد', 'دفعة', 'إيداع', 'rendu', 'versé', 'excédent', 'excedent', 'فائض']
             for item in result:
                 server_entity_name = str(item.get('entity', '')).lower()
                 if target_name not in server_entity_name:
                     continue
                 desc = item.get('desc', '')
+                desc_lower = desc.lower()
                 prefix = desc[:2].upper() if len(desc) >= 2 else ''
                 amount = float(item.get('amount', 0))
                 time_str = item.get('time', '')
                 is_main_doc = prefix in main_doc_prefixes
+                if 'دفعة من' in desc or 'Payment from' in desc:
+                    is_excess = 'excédent' in desc_lower or 'excedent' in desc_lower or 'فائض' in desc_lower
+                    if not is_excess:
+                        continue
+                if not is_main_doc:
+                    is_manual_or_excess = any((k in desc_lower for k in manual_keywords))
+                    if not is_manual_or_excess:
+                        continue
                 icon = 'file-document'
                 color = (0.2, 0.2, 0.2, 1)
                 amount_text = f'{abs(amount):.2f} DA'
@@ -1439,8 +1463,7 @@ class StockApp(MDApp):
                 final_desc = desc
                 if not is_main_doc:
                     if amount < 0:
-                        desc_lower = desc.lower()
-                        is_supplier_pay = 'règlement' in desc_lower or 'reglement' in desc_lower or 'supplier' in desc_lower
+                        is_supplier_pay = 'règlement' in desc_lower or 'reglement' in desc_lower or 'supplier' in desc_lower or ('سداد' in desc_lower)
                         if is_supplier_pay:
                             icon = 'cash-refund'
                             color = (1, 0.6, 0, 1)
@@ -1451,7 +1474,9 @@ class StockApp(MDApp):
                             icon = 'cash-plus'
                             color = (0, 0.7, 0, 1)
                             amount_text = f'+ {abs(amount):.2f} DA'
-                            if 'versement' in desc_lower:
+                            if 'excédent' in desc_lower or 'excedent' in desc_lower:
+                                final_desc = f'Versement (Excédent)'
+                            elif 'versement' in desc_lower:
                                 final_desc = desc
                             else:
                                 final_desc = f'Versement ({desc})'
@@ -2101,14 +2126,26 @@ class StockApp(MDApp):
             Clock.schedule_once(lambda d: self.try_sync_offline_data(), 1)
 
     def toggle_sync(self):
+        if self.sync_paused:
+            self.execute_toggle_sync()
+            return
+
+        def confirm_stop(x):
+            if self.stop_sync_dialog:
+                self.stop_sync_dialog.dismiss()
+            self.execute_toggle_sync()
+        self.stop_sync_dialog = MDDialog(title='Attention', text="Voulez-vous vraiment arrêter la synchronisation ?\n\nL'application passera en mode HORS LIGNE et ne communiquera plus avec le serveur.", buttons=[MDFlatButton(text='ANNULER', on_release=lambda x: self.stop_sync_dialog.dismiss()), MDRaisedButton(text='ARRÊTER', md_bg_color=(0.8, 0, 0, 1), text_color=(1, 1, 1, 1), on_release=confirm_stop)])
+        self.stop_sync_dialog.open()
+
+    def execute_toggle_sync(self):
         self.sync_paused = not self.sync_paused
         action_items = self.dash_toolbar.right_action_items
         if self.sync_paused:
-            action_items[1] = ['sync-off', lambda x: self.toggle_sync()]
+            action_items[0] = ['sync-off', lambda x: self.toggle_sync()]
             self.is_server_reachable = False
             self.notify('SYNC ARRÊTÉE', 'error')
         else:
-            action_items[1] = ['sync', lambda x: self.toggle_sync()]
+            action_items[0] = ['sync', lambda x: self.toggle_sync()]
             self.notify('SYNC ACTIVE... Connexion', 'success')
             self.check_server_heartbeat(0)
         self.dash_toolbar.right_action_items = action_items
@@ -2240,7 +2277,7 @@ class StockApp(MDApp):
     def _build_dashboard_screen(self):
         screen = MDScreen(name='dashboard')
         layout = MDBoxLayout(orientation='vertical')
-        self.dash_toolbar = MDTopAppBar(title='Accueil', right_action_items=[['clock-time-eight-outline', lambda x: self.show_pending_dialog()], ['sync', lambda x: self.toggle_sync()], ['logout', lambda x: self.logout()]])
+        self.dash_toolbar = MDTopAppBar(title='Accueil', left_action_items=[['clipboard-text-clock', lambda x: self.show_pending_dialog()]], right_action_items=[['sync', lambda x: self.toggle_sync()], ['logout', lambda x: self.logout()]])
         layout.add_widget(self.dash_toolbar)
         scroll = MDScrollView()
         self.main_dash_content = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(20), padding=dp(15))
@@ -3479,7 +3516,7 @@ class StockApp(MDApp):
                 self.txt_simple_amount.text = '-' + str(digit)
             else:
                 self.txt_simple_amount.text = current + str(digit)
-        input_row = MDBoxLayout(orientation='horizontal', size_hint_y=None, height=dp(80), spacing='10dp', padding=[dp(20), 0])
+        input_row = MDBoxLayout(orientation='horizontal', size_hint_y=None, height=dp(110), spacing='10dp', padding=[dp(20), 0])
         val = ''
         if amount:
             try:
@@ -3490,12 +3527,13 @@ class StockApp(MDApp):
                     val = str(f_val)
             except:
                 val = str(amount)
-        self.txt_simple_amount = MDTextField(text=val, hint_text='Montant (DA)', font_size='40sp', halign='center', readonly=True, mode='fill', line_color_focus=theme_col, size_hint_x=0.7)
+        self.txt_simple_amount = MDTextField(text=val, hint_text='Montant (DA)', font_size='45sp', halign='center', readonly=True, mode='fill', line_color_focus=theme_col, size_hint_x=0.7)
         self.txt_simple_amount.get_value = lambda: self.txt_simple_amount.text
         self.btn_note_icon = MDIconButton(icon='note-edit-outline', theme_text_color='Custom', text_color=(1, 1, 1, 1), md_bg_color=(0.2, 0.2, 0.2, 1), size_hint=(None, None), size=(dp(55), dp(55)), pos_hint={'center_y': 0.5}, on_release=self.open_note_input)
         btn_del = MDIconButton(icon='backspace-outline', theme_text_color='Custom', text_color=(1, 1, 1, 1), md_bg_color=(0.9, 0.1, 0.1, 1), size_hint=(None, None), size=(dp(55), dp(55)), pos_hint={'center_y': 0.5}, on_release=backspace)
         input_row.add_widget(self.txt_simple_amount)
-        input_row.add_widget(self.btn_note_icon)
+        if not self.editing_transaction_key:
+            input_row.add_widget(self.btn_note_icon)
         input_row.add_widget(btn_del)
         content.add_widget(input_row)
         grid = MDGridLayout(cols=3, spacing='10dp', size_hint_y=1, padding=[dp(20), dp(10)])
@@ -3662,7 +3700,7 @@ class StockApp(MDApp):
         self.temp_total_tva = total_tva
         base_ttc = self._round_num(total_ht + total_tva)
         is_zero_pay_mode = self.current_mode in ['transfer', 'proforma', 'order_purchase']
-        server_default_names = ['COMPTOIR', 'Comptoir', 'Fournisseur', 'زبون افتراضي', 'مورد افتراضي', 'DEFAULT_CUSTOMER', 'DEFAULT_SUPPLIER']
+        server_default_names = ['COMPTOIR', 'Comptoir', 'زبون افتراضي', 'مورد افتراضي', 'DEFAULT_CUSTOMER', 'DEFAULT_SUPPLIER']
         ent_name = str(self.selected_entity.get('name', '')).strip() if self.selected_entity else ''
         is_comptoir_entity = ent_name in server_default_names or not self.selected_entity or ent_name == ''
         should_skip_dialog = False
@@ -3678,8 +3716,12 @@ class StockApp(MDApp):
             else:
                 timbre = 0.0
                 if self.is_invoice_sale:
-                    method_val = 'Espèce'
-                    timbre = self._calculate_stamp_duty(base_ttc)
+                    if is_comptoir_entity:
+                        method_val = ''
+                        timbre = 0.0
+                    else:
+                        method_val = 'Espèce'
+                        timbre = self._calculate_stamp_duty(base_ttc)
                 elif self.current_mode == 'sale':
                     method_val = 'Espèce'
                 else:
@@ -3764,10 +3806,9 @@ class StockApp(MDApp):
         for key in keys:
             if key == 'DEL':
                 btn = MDIconButton(icon='backspace', theme_text_color='Custom', text_color=(1, 1, 1, 1), md_bg_color=(0.4, 0.4, 0.4, 1), size_hint=(1, 1), icon_size='24sp', on_release=backspace)
-                grid.add_widget(btn)
             else:
                 btn = MDRaisedButton(text=key, md_bg_color=(1, 1, 1, 1), theme_text_color='Custom', text_color=(0, 0, 0, 1), font_size='24sp', size_hint=(1, 1), elevation=1, on_release=lambda x, k=key: add_digit(k))
-                grid.add_widget(btn)
+            grid.add_widget(btn)
         content.add_widget(grid)
         content.add_widget(MDBoxLayout(size_hint_y=None, height='15dp'))
         buttons_box = MDBoxLayout(orientation='horizontal', spacing='10dp', size_hint_y=None, height='55dp')
@@ -3897,21 +3938,26 @@ class StockApp(MDApp):
             is_invoice_mode = doc_type in ['FC', 'FF', 'FP']
             calc_ht, calc_tva = self.calculate_cart_totals(self.cart, is_invoice_mode)
             base_ttc = self._round_num(calc_ht + calc_tva)
+            server_default_names = ['COMPTOIR', 'Comptoir', 'زبون افتراضي', 'مورد افتراضي', 'DEFAULT_CUSTOMER', 'DEFAULT_SUPPLIER']
+            ent_name = str(self.selected_entity.get('name', '')).strip() if self.selected_entity else ''
+            is_comptoir_entity = ent_name in server_default_names or not self.selected_entity or ent_name == ''
             timbre_amount = 0.0
             method_val = method
-            if not method_val and self.current_mode == 'invoice_sale':
-                if hasattr(self, 'payment_methods') and hasattr(self, 'current_method_index'):
+            if doc_type == 'FC' and is_comptoir_entity:
+                method_val = ''
+                timbre_amount = 0.0
+            elif doc_type == 'FC':
+                if not method_val and hasattr(self, 'payment_methods') and hasattr(self, 'current_method_index'):
                     try:
                         method_val = self.payment_methods[self.current_method_index]['value']
                     except:
                         method_val = ''
-            if not method_val:
-                method_val = ''
-            if doc_type == 'FC':
                 if method_val in ['دفع نقدًا', 'Espèce']:
                     timbre_amount = self._calculate_stamp_duty(base_ttc)
+            if not method_val:
+                method_val = ''
             real_total_to_send = self._round_num(base_ttc + timbre_amount)
-            excess_amount = 0
+            excess_amount = 0.0
             invoice_paid_amount = paid_amount
             is_real_transaction = self.current_mode not in ['proforma', 'order_purchase', 'transfer']
             if is_real_transaction and self.current_mode in ['sale', 'purchase', 'invoice_sale', 'invoice_purchase']:
@@ -3921,18 +3967,23 @@ class StockApp(MDApp):
                 else:
                     invoice_paid_amount = paid_amount
             if is_real_transaction:
+                full_payment = invoice_paid_amount + excess_amount
                 if self.current_mode in ['sale', 'invoice_sale']:
-                    self.stat_sales_today += invoice_paid_amount
-                elif self.current_mode == 'return_sale':
-                    self.stat_sales_today -= invoice_paid_amount
+                    self.stat_sales_today += full_payment
                 elif self.current_mode in ['purchase', 'invoice_purchase']:
-                    self.stat_purchases_today += invoice_paid_amount
-                elif self.current_mode == 'return_purchase':
-                    self.stat_purchases_today -= invoice_paid_amount
+                    self.stat_purchases_today += full_payment
                 self.calculate_net_total()
                 self.save_local_stats()
             ent_id = self.selected_entity['id'] if self.selected_entity else None
             payment_info = {'amount': invoice_paid_amount, 'total': real_total_to_send, 'method': method_val, 'timbre': timbre_amount}
+            excess_data = None
+            if excess_amount > 0 and ent_id:
+                p_type = 'supplier_pay' if 'purchase' in self.current_mode or 'supplier' in self.current_mode else 'client_pay'
+                if p_type == 'supplier_pay':
+                    custom_label = 'Réglement'
+                else:
+                    custom_label = 'Versement'
+                excess_data = {'entity_id': ent_id, 'amount': excess_amount, 'type': p_type, 'custom_label': custom_label, 'user_name': self.current_user_name, 'note': custom_label, 'is_simple_payment': True, 'timestamp': str(datetime.now())}
             server_id_to_update = None
             if self.editing_transaction_key:
                 if self.editing_transaction_key == 'SERVER_EDIT_MODE':
@@ -3967,25 +4018,36 @@ class StockApp(MDApp):
                                 threading.Thread(target=self.print_ticket_bluetooth, args=(data,), daemon=True).start()
                 except Exception as e:
                     print(f'Auto print error: {e}')
-                self.on_submit_success_ui()
+                msg = 'Succès ✅'
+                if excess_amount > 0:
+                    msg = 'Succès (Facture + Excédent) ✅'
+                self.notify(msg, 'success')
+                self.cart = []
+                self.selected_entity = None
+                self.selected_location = 'store'
+                self.update_cart_button()
+                self.go_back()
 
             def on_fail(req, err):
                 self.is_transaction_in_progress = False
-                self.save_offline_and_ui(data)
-
-            def send_excess():
-                if excess_amount <= 0:
-                    finalize_process()
-                    return
-                p_type = 'client_pay' if self.current_mode in ['sale', 'invoice_sale'] else 'supplier_pay'
-                c_label = 'Versement' if self.current_mode in ['sale', 'invoice_sale'] else 'REGLEMENT'
-                if p_type == 'client_pay':
-                    self.stat_client_payments += excess_amount
-                else:
-                    self.stat_supplier_payments += excess_amount
-                self.save_local_stats()
-                pay_data = {'entity_id': ent_id, 'amount': excess_amount, 'type': p_type, 'custom_label': c_label, 'user_name': self.current_user_name, 'note': 'Automatique', 'is_simple_payment': True, 'timestamp': str(datetime.now()), 'server_id': None}
-                UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/submit_payment', req_body=json.dumps(pay_data), req_headers={'Content-type': 'application/json'}, method='POST', on_success=lambda r, s: [self.notify(f'Reste ({excess_amount:.2f}) enregistré', 'success'), finalize_process()], on_failure=lambda r, e: finalize_process(), timeout=10)
+                self.save_to_history(data, synced=False)
+                if excess_data:
+                    self.save_to_history(excess_data, synced=False)
+                    self.update_local_entity_balance(excess_data['entity_id'], excess_data['amount'])
+                try:
+                    printable_modes = ['sale', 'purchase', 'return_sale', 'return_purchase', 'transfer']
+                    if self.current_mode in printable_modes:
+                        if self.store.exists('printer_config'):
+                            conf = self.store.get('printer_config')
+                            if conf.get('auto', False) and conf.get('mac', ''):
+                                threading.Thread(target=self.print_ticket_bluetooth, args=(data,), daemon=True).start()
+                except:
+                    pass
+                self.cart = []
+                self.selected_entity = None
+                self.selected_location = 'store'
+                self.update_cart_button()
+                self.go_back()
             if self.is_server_reachable:
 
                 def on_invoice_success(req, res):
@@ -3994,23 +4056,24 @@ class StockApp(MDApp):
                     if res.get('invoice_number'):
                         data['invoice_number'] = res.get('invoice_number')
                     self.save_to_history(data, synced=True)
-                    if excess_amount > 0:
-                        send_excess()
+                    if excess_data:
+
+                        def on_excess_success(req2, res2):
+                            if res2.get('server_id'):
+                                excess_data['server_id'] = res2.get('server_id')
+                            self.save_to_history(excess_data, synced=True)
+                            type_refresh = 'supplier' if excess_data['type'] == 'supplier_pay' else 'account'
+                            self.fetch_entities(type_refresh)
+                            finalize_process()
+                        UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/submit_payment', req_body=json.dumps(excess_data), req_headers={'Content-type': 'application/json'}, method='POST', on_success=on_excess_success, on_failure=lambda r, e: [self.save_to_history(excess_data, synced=False), finalize_process()], on_error=lambda r, e: [self.save_to_history(excess_data, synced=False), finalize_process()])
                     else:
                         finalize_process()
                 UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/submit_order', req_body=json.dumps(data), req_headers={'Content-type': 'application/json'}, method='POST', on_success=on_invoice_success, on_error=on_fail, on_failure=on_fail, timeout=10)
             else:
-                if excess_amount > 0:
-                    p_type = 'client_pay' if self.current_mode in ['sale', 'invoice_sale'] else 'supplier_pay'
-                    local_label = 'Versement' if self.current_mode in ['sale', 'invoice_sale'] else 'Règlement'
-                    pay_data = {'entity_id': ent_id, 'amount': excess_amount, 'type': p_type, 'custom_label': local_label, 'user_name': self.current_user_name, 'is_simple_payment': True, 'timestamp': str(datetime.now())}
-                    self.submit_simple_payment_offline(pay_data)
-                self.is_transaction_in_progress = False
-                self.save_offline_and_ui(data)
+                on_fail(None, None)
         except Exception as e:
             self.is_transaction_in_progress = False
             self.notify(f'Erreur fatale: {e}', 'error')
-            print(f'CRASH ERROR: {e}')
 
     def on_submit_success_ui(self):
         self.notify('Succès ✅', 'success')
@@ -4111,7 +4174,15 @@ class StockApp(MDApp):
             dt_str = datetime.fromtimestamp(ts_val).strftime('%H:%M')
             entity_name = 'Inconnu'
             ent_id = data.get('entity_id')
-            if ent_id:
+            if doc_type == 'TR':
+                loc = data.get('purchase_location', 'store')
+                if not loc:
+                    loc = data.get('location', 'store')
+                if loc == 'store':
+                    entity_name = 'Magasin -> Dépôt'
+                else:
+                    entity_name = 'Dépôt -> Magasin'
+            elif ent_id:
                 found = next((c for c in self.all_clients if c['id'] == ent_id), None)
                 if not found:
                     found = next((s for s in self.all_suppliers if s['id'] == ent_id), None)
@@ -4124,10 +4195,14 @@ class StockApp(MDApp):
                 amount = float(data.get('amount', 0))
             else:
                 try:
-                    amount = sum((float(i.get('price', 0)) * float(i.get('qty', 0)) * (1 + float(i.get('tva', 0)) / 100) for i in data.get('items', [])))
+                    ht, tva = self.calculate_cart_totals(data.get('items', []), doc_type in ['FC', 'FF'])
+                    amount = ht + tva
+                    if doc_type == 'FC':
+                        pay_info = data.get('payment_info', {})
+                        amount += float(pay_info.get('timbre', 0))
                 except:
                     amount = 0
-            full_doc_name = ''
+            full_doc_name = self.DOC_TRANSLATIONS.get(doc_type, doc_type)
             icon_name = 'file-document'
             icon_color = (0, 0.5, 0.8, 1)
             bg_col = (1, 1, 1, 1)
@@ -4141,7 +4216,8 @@ class StockApp(MDApp):
             elif is_simple_payment:
                 p_type = data.get('type', 'client_pay')
                 if amount >= 0:
-                    if p_type == 'supplier_pay':
+                    custom_lbl = str(data.get('custom_label', '')).upper()
+                    if p_type == 'supplier_pay' or 'REGLEMENT' in custom_lbl or 'RÈGLEMENT' in custom_lbl:
                         full_doc_name = 'Règlement'
                         icon_name = 'cash-refund'
                         icon_color = (1, 0.6, 0, 1)
@@ -4155,26 +4231,50 @@ class StockApp(MDApp):
                     icon_name = 'notebook-edit'
                     icon_color = (0.8, 0, 0, 1)
                     amount_text = f'- {abs(amount):.2f} DA'
-            else:
-                full_doc_name = self.DOC_TRANSLATIONS.get(doc_type, doc_type)
-                if doc_type == 'RC':
-                    icon_color = (0.8, 0, 0, 1)
-                    icon_name = 'keyboard-return'
-                    bg_col = (1, 0.95, 0.95, 1)
-                elif doc_type == 'BA':
-                    icon_color = (1, 0.6, 0, 1)
-                    icon_name = 'truck'
-                elif doc_type == 'BV':
-                    icon_name = 'cart'
-                elif doc_type == 'RF':
-                    icon_name = 'undo'
-                    icon_color = (0, 0.6, 0.6, 1)
+            elif doc_type == 'BV':
+                icon_name = 'cart'
+                full_doc_name = 'Bon de Vente'
+            elif doc_type == 'BA':
+                icon_name = 'truck'
+                full_doc_name = "Bon d'Achat"
+                icon_color = (1, 0.6, 0, 1)
+            elif doc_type == 'RC':
+                icon_name = 'keyboard-return'
+                bg_col = (1, 0.95, 0.95, 1)
+                icon_color = (0.8, 0, 0, 1)
+                full_doc_name = 'Retour Client'
+            elif doc_type == 'RF':
+                icon_name = 'undo'
+                icon_color = (0, 0.6, 0.6, 1)
+                full_doc_name = 'Retour Fournisseur'
+            elif doc_type == 'FC':
+                icon_name = 'file-document'
+                full_doc_name = 'Facture Vente'
+                icon_color = (0, 0, 0.8, 1)
+            elif doc_type == 'FF':
+                icon_name = 'file-document-edit'
+                full_doc_name = 'Facture Achat'
+                icon_color = (1, 0.4, 0, 1)
+            elif doc_type == 'FP':
+                icon_name = 'file-document-outline'
+                full_doc_name = 'Proforma'
+                icon_color = (0.5, 0, 0.5, 1)
+            elif doc_type == 'DP':
+                icon_name = 'clipboard-list'
+                full_doc_name = 'Bon de Commande'
+                icon_color = (0, 0.5, 0.5, 1)
+            elif doc_type == 'BI':
+                icon_name = 'database-plus'
+                full_doc_name = 'Bon Initial'
             header_text = f'{full_doc_name} - {entity_name}'
-            self.history_rv_data.append({'raw_text': header_text, 'raw_sec': f'Local • {dt_str} • (Non Sync)', 'amount_text': amount_text, 'icon': icon_name, 'icon_color': icon_color, 'bg_color': bg_col, 'is_local': True, 'key': k, 'raw_data': None})
+            sec_text = f'Local • {dt_str} • (En attente)'
+            self.history_rv_data.append({'raw_text': header_text, 'raw_sec': sec_text, 'amount_text': amount_text, 'icon': icon_name, 'icon_color': icon_color, 'bg_color': bg_col, 'is_local': True, 'key': k, 'raw_data': None})
         self.rv_history.data = self.history_rv_data
         if self.is_server_reachable:
             url = f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/history?date={target_date}'
             UrlRequest(url, on_success=self.on_history_server_loaded)
+        elif not self.history_rv_data:
+            self.rv_history.data = [{'raw_text': 'Aucune opération locale.', 'raw_sec': '', 'amount_text': '', 'icon': 'alert-circle-outline', 'icon_color': (0.5, 0.5, 0.5, 1), 'bg_color': (1, 1, 1, 1), 'is_local': False, 'key': '', 'raw_data': None}]
 
     def on_history_server_loaded(self, req, result):
         if not result:
@@ -4290,10 +4390,9 @@ class StockApp(MDApp):
         doc_type = data.get('doc_type', 'BV')
         if self.is_seller_mode:
             try:
-                ts_val = int(key.split('_')[0])
-                item_date = datetime.fromtimestamp(ts_val).date()
-                today = datetime.now().date()
-                if item_date != today:
+                ts_key = int(key.split('_')[0])
+                item_date = datetime.fromtimestamp(ts_key).date()
+                if item_date != datetime.now().date():
                     self.notify('Modification interdite (Date passée)', 'error')
                     return
             except:
@@ -4308,13 +4407,13 @@ class StockApp(MDApp):
             return
 
         def do_delete(x):
-            if self.action_dialog:
-                self.action_dialog.dismiss()
+            if self.srv_dialog:
+                self.srv_dialog.dismiss()
             if is_synced:
                 server_id = data.get('server_id')
-                is_transfer = data.get('doc_type') == 'TR'
+                is_tr = doc_type == 'TR'
                 if server_id and self.is_server_reachable:
-                    UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/delete_transaction', req_body=json.dumps({'server_id': server_id, 'is_transfer': is_transfer}), req_headers={'Content-type': 'application/json'}, method='POST', on_success=lambda r, s: self.offline_store.delete(key) or self.notify('Supprimé du Serveur', 'success'), on_failure=lambda r, e: self.notify('Echec suppression serveur', 'error'))
+                    UrlRequest(f'http://{self.active_server_ip}:{DEFAULT_PORT}/api/delete_transaction', req_body=json.dumps({'server_id': server_id, 'is_transfer': is_tr}), req_headers={'Content-type': 'application/json'}, method='POST', on_success=lambda r, s: self.offline_store.delete(key) or self.notify('Supprimé du Serveur', 'success'), on_failure=lambda r, e: self.notify('Echec suppression serveur', 'error'))
                 else:
                     self.offline_store.delete(key)
                     self.notify('Supprimé (Local)', 'info')
@@ -4326,8 +4425,8 @@ class StockApp(MDApp):
             self.filter_history_list(specific_date=target_date)
 
         def do_load(x):
-            if self.action_dialog:
-                self.action_dialog.dismiss()
+            if self.srv_dialog:
+                self.srv_dialog.dismiss()
             try:
                 self.editing_transaction_key = key
                 self.current_editing_date = data.get('timestamp')
@@ -4335,10 +4434,10 @@ class StockApp(MDApp):
                 if data.get('is_simple_payment'):
                     self.current_mode = data.get('type')
                     saved_ent_id = data.get('entity_id')
-                    found_entity = next((c for c in self.all_clients if c['id'] == saved_ent_id), None)
-                    if not found_entity:
-                        found_entity = next((s for s in self.all_suppliers if s['id'] == saved_ent_id), None)
-                    self.selected_entity = found_entity if found_entity else {'id': saved_ent_id, 'name': 'Client Inconnu'}
+                    found = next((c for c in self.all_clients if c['id'] == saved_ent_id), None)
+                    if not found:
+                        found = next((s for s in self.all_suppliers if s['id'] == saved_ent_id), None)
+                    self.selected_entity = found if found else {'id': saved_ent_id, 'name': 'Inconnu'}
                     self.show_simple_payment_dialog(amount=abs(float(data.get('amount', 0))))
                     return
                 self.original_doc_type = doc_type
@@ -4349,9 +4448,7 @@ class StockApp(MDApp):
                 for item in raw_items:
                     item['tva'] = float(item.get('tva', 0))
                     self.cart.append(item)
-                saved_loc = data.get('purchase_location')
-                if not saved_loc:
-                    saved_loc = data.get('location', 'store')
+                saved_loc = data.get('purchase_location') or data.get('location', 'store')
                 self.selected_location = saved_loc
                 saved_ent_id = data.get('entity_id')
                 found_entity = None
@@ -4359,16 +4456,12 @@ class StockApp(MDApp):
                     found_entity = next((c for c in self.all_clients if c['id'] == saved_ent_id), None)
                     if not found_entity:
                         found_entity = next((s for s in self.all_suppliers if s['id'] == saved_ent_id), None)
-                    if found_entity:
-                        self.selected_entity = found_entity
-                    else:
-                        self.selected_entity = {'id': saved_ent_id, 'name': 'Client (Cache)'}
+                    self.selected_entity = found_entity if found_entity else {'id': saved_ent_id, 'name': 'Client (Cache)'}
                 else:
                     self.selected_entity = {'id': None, 'name': 'COMPTOIR'}
                 self.update_location_display()
                 if self.selected_entity and hasattr(self, 'btn_ent_screen'):
-                    display_name = self.fix_text(str(self.selected_entity.get('name', 'Client')))[:15]
-                    self.btn_ent_screen.text = display_name
+                    self.btn_ent_screen.text = self.fix_text(str(self.selected_entity.get('name', '')))[:15]
                     self.btn_ent_screen.disabled = False
                     if self.current_mode in ['sale', 'return_sale', 'client_payment', 'invoice_sale', 'proforma']:
                         self.btn_ent_screen.md_bg_color = (0, 0.6, 0.6, 1)
@@ -4391,23 +4484,126 @@ class StockApp(MDApp):
                 self.notify('Impression lancée...', 'info')
             except Exception as e:
                 self.notify(f'Erreur Impression: {e}', 'error')
-        title_text = 'Action (Synchronisé)' if is_synced else 'Action (Non Synchronisé)'
-        if is_synced:
-            title_text += ' [Admin]'
-        content = MDBoxLayout(orientation='vertical', spacing='12dp', size_hint_y=None, height='140dp', padding=[0, '10dp', 0, 0])
-        content.add_widget(MDLabel(text='Que voulez-vous faire avec cette opération ?', theme_text_color='Secondary', adaptive_height=True))
+        ts_raw = data.get('timestamp')
+        date_display = 'Inconnue'
+        try:
+            if isinstance(ts_raw, (int, float)):
+                date_display = datetime.fromtimestamp(ts_raw).strftime('%Y-%m-%d %H:%M')
+            else:
+                dt_str = str(ts_raw).split('.')[0]
+                if len(dt_str) >= 16:
+                    date_display = dt_str[:16]
+                else:
+                    date_display = dt_str
+        except:
+            date_display = str(ts_raw)
+        ent_id = data.get('entity_id')
+        entity_name = 'COMPTOIR'
+        if ent_id:
+            found = next((c for c in self.all_clients if c['id'] == ent_id), None)
+            if not found:
+                found = next((s for s in self.all_suppliers if s['id'] == ent_id), None)
+            if found:
+                entity_name = found.get('name', 'Tiers')
+        is_transfer = doc_type == 'TR'
+        if is_transfer:
+            loc = data.get('purchase_location') or data.get('location', 'store')
+            if loc == 'store':
+                entity_name = 'Magasin -> Dépôt'
+            else:
+                entity_name = 'Dépôt -> Magasin'
+        items = data.get('items', [])
+        total_items = 0.0
+        for item in items:
+            p = float(item.get('price', 0))
+            q = float(item.get('qty', 0))
+            t = float(item.get('tva', 0))
+            total_items += p * q * (1 + t / 100)
+        payment_info = data.get('payment_info', {})
+        timbre = float(payment_info.get('timbre', 0))
+        final_total = total_items + timbre
+        paid_amount = float(payment_info.get('amount', 0)) if not is_transfer else 0
+        full_doc_name = self.DOC_TRANSLATIONS.get(doc_type, doc_type)
+        is_financial = data.get('is_simple_payment', False)
+        if is_financial:
+            amount = float(data.get('amount', 0))
+            if amount >= 0:
+                p_type = data.get('type', 'client_pay')
+                if p_type == 'supplier_pay':
+                    full_doc_name = 'Règlement'
+                    amount_color = (1, 0.6, 0, 1)
+                else:
+                    full_doc_name = 'Versement'
+                    amount_color = (0, 0.7, 0, 1)
+                display_amount = f'+ {abs(amount):.2f} DA'
+            else:
+                full_doc_name = 'Crédit / Dette'
+                amount_color = (0.8, 0, 0, 1)
+                display_amount = f'- {abs(amount):.2f} DA'
+            final_total = abs(amount)
+        else:
+            amount_color = (0, 0, 0, 1)
+            display_amount = f'{final_total:.2f} DA'
+        if is_transfer:
+            full_doc_name = 'Transfert Stock'
+            display_amount = 'Stock'
+            amount_color = (0.5, 0, 0.5, 1)
+        content = MDBoxLayout(orientation='vertical', spacing=10, size_hint_y=None, height=dp(550))
+        header_box = MDCard(orientation='vertical', adaptive_height=True, padding=dp(10), md_bg_color=(0.95, 0.95, 0.95, 1), radius=[10])
+        header_box.add_widget(MDLabel(text=self.fix_text(f'{full_doc_name} - {entity_name}'), bold=True, font_style='Subtitle1', adaptive_height=True))
+        header_box.add_widget(MDLabel(text=f'Date: {date_display}', font_style='Caption', theme_text_color='Secondary', adaptive_height=True))
+        header_box.add_widget(MDLabel(text=f'Montant: {display_amount}', theme_text_color='Custom', text_color=amount_color, bold=True, font_style='H5', adaptive_height=True))
+        if not is_financial and (not is_transfer):
+            if timbre > 0:
+                header_box.add_widget(MDLabel(text=f'Timbre: {timbre:.2f} DA', font_style='Caption', theme_text_color='Custom', text_color=(0.5, 0, 0.5, 1), adaptive_height=True))
+            diff = round(final_total - paid_amount, 2)
+            if abs(diff) <= 0.05:
+                pay_row = MDBoxLayout(orientation='horizontal', adaptive_height=True, spacing=dp(5))
+                pay_row.add_widget(MDLabel(text='Payée', theme_text_color='Custom', text_color=(0, 0.6, 0, 1), bold=True, font_style='Subtitle1', adaptive_size=True))
+                pay_row.add_widget(MDIcon(icon='check-circle', theme_text_color='Custom', text_color=(0, 0.6, 0, 1), font_size='20sp', pos_hint={'center_y': 0.5}))
+                header_box.add_widget(pay_row)
+            else:
+                header_box.add_widget(MDLabel(text=f'Versé: {paid_amount:.2f} DA', theme_text_color='Custom', text_color=(0, 0.6, 0, 1), bold=True, font_style='Subtitle1', adaptive_height=True))
+                header_box.add_widget(MDLabel(text=f'Reste: {diff:.2f} DA', theme_text_color='Custom', text_color=(0.8, 0, 0, 1), bold=True, font_style='Subtitle1', adaptive_height=True))
+        content.add_widget(header_box)
+        content.add_widget(MDLabel(text='Détails:', font_style='Caption', size_hint_y=None, height=dp(20)))
+        scroll = MDScrollView()
+        list_layout = MDList()
+        if items and (not is_financial):
+            for item in items:
+                qty = float(item.get('qty', 0))
+                qty_str = str(int(qty)) if qty.is_integer() else str(qty)
+                price = float(item.get('price', 0))
+                line_total = qty * price * (1 + float(item.get('tva', 0)) / 100)
+                item_box = MDBoxLayout(orientation='vertical', adaptive_height=True, padding=[dp(16), dp(8)], spacing=dp(4))
+                lbl_name = MDLabel(text=self.fix_text(item.get('name', '')), theme_text_color='Primary', font_style='Subtitle1', bold=True, adaptive_height=True, shorten=False)
+                lbl_details = MDLabel(text=f'{qty_str} x {price:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
+                lbl_total = MDLabel(text=f'Total: {line_total:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
+                item_box.add_widget(lbl_name)
+                item_box.add_widget(lbl_details)
+                item_box.add_widget(lbl_total)
+                list_layout.add_widget(item_box)
+                list_layout.add_widget(MDBoxLayout(size_hint_y=None, height=dp(1), md_bg_color=(0.9, 0.9, 0.9, 1)))
+        elif is_financial:
+            list_layout.add_widget(OneLineListItem(text='Opération Financière (Caisse)'))
+        else:
+            list_layout.add_widget(OneLineListItem(text='Aucun article'))
+        scroll.add_widget(list_layout)
+        content.add_widget(scroll)
+        actions_layout = MDBoxLayout(orientation='vertical', spacing='10dp', adaptive_height=True, padding=[0, '15dp', 0, 0])
         top_row = MDBoxLayout(orientation='horizontal', spacing='10dp', size_hint_y=None, height='50dp')
-        pdf_only_types = ['FC', 'FP', 'FF', 'DP', 'BI']
-        btn_print = MDFillRoundFlatButton(text='IMPRIMER', md_bg_color=(0, 0.5, 0.8, 1), text_color=(1, 1, 1, 1), font_style='Button', size_hint_x=0.5, on_release=do_print)
-        if doc_type not in pdf_only_types:
+        if doc_type not in ['FC', 'FP', 'FF', 'DP', 'BI']:
+            btn_print = MDFillRoundFlatButton(text='IMPRIMER', md_bg_color=(0, 0.5, 0.8, 1), text_color=(1, 1, 1, 1), size_hint_x=0.5, on_release=do_print)
             top_row.add_widget(btn_print)
-        btn_edit = MDFillRoundFlatButton(text='MODIFIER', md_bg_color=(0, 0.7, 0, 1), text_color=(1, 1, 1, 1), font_style='Button', size_hint_x=0.5, on_release=do_load)
+        btn_edit = MDFillRoundFlatButton(text='MODIFIER', md_bg_color=(0, 0.7, 0, 1), text_color=(1, 1, 1, 1), size_hint_x=0.5, on_release=do_load)
         top_row.add_widget(btn_edit)
-        content.add_widget(top_row)
-        btn_delete = MDFlatButton(text='SUPPRIMER', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), font_style='Button', size_hint_x=1, on_release=do_delete)
-        content.add_widget(btn_delete)
-        self.action_dialog = MDDialog(title=title_text, type='custom', content_cls=content, radius=[20, 7, 20, 7])
-        self.action_dialog.open()
+        actions_layout.add_widget(top_row)
+        btn_delete = MDFlatButton(text='SUPPRIMER (LOCAL)', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), size_hint_x=1, on_release=do_delete)
+        actions_layout.add_widget(btn_delete)
+        content.add_widget(actions_layout)
+        title_txt = 'Détails (Non Synchronisé)' + (' [Admin]' if is_synced else '')
+        self.srv_dialog = MDDialog(title=title_txt, type='custom', content_cls=content, size_hint=(0.95, 0.95), buttons=[MDFlatButton(text='FERMER', on_release=lambda x: self.srv_dialog.dismiss())])
+        self.srv_dialog.open()
 
     def view_synced_transaction(self, data):
         content = MDBoxLayout(orientation='vertical', size_hint_y=None, height=dp(500))
