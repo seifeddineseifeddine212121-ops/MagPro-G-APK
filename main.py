@@ -1888,11 +1888,12 @@ class StockApp(MDApp):
         f_email = SmartTextField(text=val_email, hint_text='Email')
         f_price_cat = MDTextField(text=display_cat, hint_text='Catégorie de Prix', readonly=True)
 
-        def on_cat_focus(instance, value):
-            if value:
-                instance.focus = False
+        def on_cat_touch(instance, touch):
+            if instance.collide_point(*touch.pos):
                 self.show_price_cat_selector(instance)
-        f_price_cat.bind(focus=on_cat_focus)
+                return True
+            return False
+        f_price_cat.bind(on_touch_down=on_cat_touch)
         f_rc = SmartTextField(text=val_rc, hint_text='N° Registre Commerce (RC)')
         f_nif = SmartTextField(text=val_nif, hint_text='N.I.F')
         f_nis = SmartTextField(text=val_nis, hint_text='N.I.S')
@@ -2920,16 +2921,20 @@ class StockApp(MDApp):
         else:
             final_list = defaults + others
         rv_data = []
-        is_client_mode = self.current_mode in ['sale', 'return_sale', 'client_payment', 'invoice_sale', 'proforma']
+        sales_modes = ['sale', 'return_sale', 'invoice_sale', 'proforma', 'client_payment']
+        is_client_mode = self.current_mode in sales_modes
         bal_color_hex = '00C853' if is_client_mode else 'D50000'
         for e in final_list:
             raw_name = e.get('name', '')
             is_def_acc = is_default(raw_name)
             if is_def_acc:
-                display_name = 'COMPTOIR'
-                balance_markup = ''
+                if is_client_mode:
+                    display_name = 'CLIENT'
+                else:
+                    display_name = 'FOURNISSEUR'
+                balance_markup = '[size=18sp][b][color=101010]COMPTOIR[/color][/b][/size]'
                 icon_name = 'store'
-                icon_col = [0.2, 0.2, 0.2, 1]
+                icon_col = [0, 0.4, 0.7, 1]
             else:
                 display_name = raw_name
                 balance = float(e.get('balance', 0))
@@ -3264,30 +3269,32 @@ class StockApp(MDApp):
             val_p2 = fmt(product.get('price_semi', 0)) if is_edit else ''
             val_p3 = fmt(product.get('price_wholesale', 0)) if is_edit else ''
             scroll = MDScrollView(size_hint_y=None, height=dp(500))
-            box = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(10), padding=[0, 10, 0, 0])
+            box = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(15), padding=[0, 10, 0, 0])
             box.add_widget(MDLabel(text='Identification', font_style='Caption', theme_text_color='Primary', bold=True))
-            row_id = MDBoxLayout(orientation='horizontal', spacing=dp(10), adaptive_height=True)
-            self.field_num = MDTextField(text=val_ref, hint_text='Num de Produit', size_hint_x=0.3)
-            self.field_bar = MDTextField(text=val_barcode, hint_text='Code-barres', size_hint_x=0.55)
-            btn_gen = MDIconButton(icon='barcode', on_release=lambda x: setattr(self.field_bar, 'text', '7' + ''.join([str(random.randint(0, 9)) for _ in range(12)])), size_hint_x=0.15)
-            row_id.add_widget(self.field_num)
-            row_id.add_widget(self.field_bar)
-            row_id.add_widget(btn_gen)
-            box.add_widget(row_id)
+            self.field_num = MDTextField(text=val_ref, hint_text='Num de Produit', size_hint_x=1)
+            box.add_widget(self.field_num)
+            row_bar = MDBoxLayout(orientation='horizontal', spacing=dp(5), adaptive_height=True)
+            self.field_bar = MDTextField(text=val_barcode, hint_text='Code-barres', size_hint_x=0.85)
+            btn_gen = MDIconButton(icon='barcode', theme_text_color='Custom', text_color=self.theme_cls.primary_color, on_release=lambda x: setattr(self.field_bar, 'text', '7' + ''.join([str(random.randint(0, 9)) for _ in range(12)])), size_hint_x=0.15, pos_hint={'center_y': 0.5})
+            row_bar.add_widget(self.field_bar)
+            row_bar.add_widget(btn_gen)
+            box.add_widget(row_bar)
             self.field_name = SmartTextField(text=val_name, hint_text='Désignation (Nom)', required=True)
             self.field_desc = SmartTextField(text=val_desc, hint_text='Référence (Description)')
             box.add_widget(self.field_name)
             box.add_widget(self.field_desc)
             box.add_widget(MDBoxLayout(size_hint_y=None, height=dp(5)))
             box.add_widget(MDLabel(text='Stock', font_style='Caption', theme_text_color='Primary', bold=True))
-            row_stock_opts = MDBoxLayout(orientation='horizontal', spacing=dp(10), adaptive_height=True)
-            self.chk_unlimited = MDCheckbox(active=is_unlimited, size_hint=(None, None), size=(dp(40), dp(40)))
+            card_unlimited = MDCard(orientation='horizontal', size_hint_y=None, height=dp(50), padding=[dp(10), 0], ripple_behavior=True, md_bg_color=(0.96, 0.96, 0.96, 1), radius=[8], elevation=0)
+            self.chk_unlimited = MDCheckbox(active=is_unlimited, size_hint=(None, None), size=(dp(40), dp(40)), pos_hint={'center_y': 0.5})
             if is_used:
                 self.chk_unlimited.disabled = True
-            lbl_unlimited = MDLabel(text='Quantité Illimitée', valign='center')
-            row_stock_opts.add_widget(self.chk_unlimited)
-            row_stock_opts.add_widget(lbl_unlimited)
-            box.add_widget(row_stock_opts)
+            lbl_unlimited = MDLabel(text='Quantité Illimitée', valign='center', theme_text_color='Primary', pos_hint={'center_y': 0.5})
+            if not is_used:
+                card_unlimited.bind(on_release=lambda x: setattr(self.chk_unlimited, 'active', not self.chk_unlimited.active))
+            card_unlimited.add_widget(self.chk_unlimited)
+            card_unlimited.add_widget(lbl_unlimited)
+            box.add_widget(card_unlimited)
             self.field_stock = SmartTextField(text=val_stock, hint_text='Quantité Stock', input_filter='float')
 
             def on_checkbox_active(checkbox, value):
@@ -4407,6 +4414,8 @@ class StockApp(MDApp):
             return
 
         def do_delete(x):
+            if hasattr(self, 'confirm_del_dialog') and self.confirm_del_dialog:
+                self.confirm_del_dialog.dismiss()
             if self.srv_dialog:
                 self.srv_dialog.dismiss()
             if is_synced:
@@ -4423,6 +4432,10 @@ class StockApp(MDApp):
             self._reset_notification_state(0)
             target_date = getattr(self, 'history_view_date', datetime.now().date())
             self.filter_history_list(specific_date=target_date)
+
+        def show_confirmation(x):
+            self.confirm_del_dialog = MDDialog(title='Confirmation', text='Voulez-vous vraiment supprimer cette opération ?\nCette action est irréversible.', buttons=[MDFlatButton(text='NON', on_release=lambda y: self.confirm_del_dialog.dismiss()), MDRaisedButton(text='OUI', md_bg_color=(0.8, 0, 0, 1), text_color=(1, 1, 1, 1), on_release=do_delete)])
+            self.confirm_del_dialog.open()
 
         def do_load(x):
             if self.srv_dialog:
@@ -4577,11 +4590,16 @@ class StockApp(MDApp):
                 line_total = qty * price * (1 + float(item.get('tva', 0)) / 100)
                 item_box = MDBoxLayout(orientation='vertical', adaptive_height=True, padding=[dp(16), dp(8)], spacing=dp(4))
                 lbl_name = MDLabel(text=self.fix_text(item.get('name', '')), theme_text_color='Primary', font_style='Subtitle1', bold=True, adaptive_height=True, shorten=False)
-                lbl_details = MDLabel(text=f'{qty_str} x {price:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
-                lbl_total = MDLabel(text=f'Total: {line_total:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
-                item_box.add_widget(lbl_name)
-                item_box.add_widget(lbl_details)
-                item_box.add_widget(lbl_total)
+                if doc_type == 'TR':
+                    lbl_details = MDLabel(text=f'Qté: {qty_str}', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
+                    item_box.add_widget(lbl_name)
+                    item_box.add_widget(lbl_details)
+                else:
+                    lbl_details = MDLabel(text=f'{qty_str} x {price:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
+                    lbl_total = MDLabel(text=f'Total: {line_total:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
+                    item_box.add_widget(lbl_name)
+                    item_box.add_widget(lbl_details)
+                    item_box.add_widget(lbl_total)
                 list_layout.add_widget(item_box)
                 list_layout.add_widget(MDBoxLayout(size_hint_y=None, height=dp(1), md_bg_color=(0.9, 0.9, 0.9, 1)))
         elif is_financial:
@@ -4598,7 +4616,7 @@ class StockApp(MDApp):
         btn_edit = MDFillRoundFlatButton(text='MODIFIER', md_bg_color=(0, 0.7, 0, 1), text_color=(1, 1, 1, 1), size_hint_x=0.5, on_release=do_load)
         top_row.add_widget(btn_edit)
         actions_layout.add_widget(top_row)
-        btn_delete = MDFlatButton(text='SUPPRIMER (LOCAL)', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), size_hint_x=1, on_release=do_delete)
+        btn_delete = MDFlatButton(text='SUPPRIMER (LOCAL)', theme_text_color='Custom', text_color=(0.9, 0, 0, 1), size_hint_x=1, on_release=show_confirmation)
         actions_layout.add_widget(btn_delete)
         content.add_widget(actions_layout)
         title_txt = 'Détails (Non Synchronisé)' + (' [Admin]' if is_synced else '')
@@ -4768,11 +4786,16 @@ class StockApp(MDApp):
                 total_line = qty * price
                 item_box = MDBoxLayout(orientation='vertical', adaptive_height=True, padding=[dp(16), dp(8)], spacing=dp(4))
                 lbl_name = MDLabel(text=self.fix_text(item.get('name', '')), theme_text_color='Primary', font_style='Subtitle1', bold=True, adaptive_height=True, shorten=False)
-                lbl_details = MDLabel(text=f'{qty_str} x {price:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
-                lbl_total = MDLabel(text=f'Total: {total_line:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
-                item_box.add_widget(lbl_name)
-                item_box.add_widget(lbl_details)
-                item_box.add_widget(lbl_total)
+                if is_transfer:
+                    lbl_details = MDLabel(text=f'Qté: {qty_str}', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
+                    item_box.add_widget(lbl_name)
+                    item_box.add_widget(lbl_details)
+                else:
+                    lbl_details = MDLabel(text=f'{qty_str} x {price:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
+                    lbl_total = MDLabel(text=f'Total: {total_line:.2f} DA', theme_text_color='Secondary', font_style='Body2', adaptive_height=True)
+                    item_box.add_widget(lbl_name)
+                    item_box.add_widget(lbl_details)
+                    item_box.add_widget(lbl_total)
                 list_layout.add_widget(item_box)
                 list_layout.add_widget(MDBoxLayout(size_hint_y=None, height=dp(1), md_bg_color=(0.9, 0.9, 0.9, 1)))
         else:
@@ -4802,7 +4825,7 @@ class StockApp(MDApp):
         except:
             is_today = False
         can_edit = not self.is_seller_mode or is_today
-        if can_edit:
+        if can_edit and prefix != 'BI':
             btn_edit = MDFillRoundFlatButton(text='MODIFIER', md_bg_color=(0, 0.6, 0.4, 1), text_color=(1, 1, 1, 1), size_hint_x=1, on_release=lambda x: self.load_server_transaction_for_edit(header_data, items))
             top_row.add_widget(btn_edit)
         actions_layout.add_widget(top_row)
