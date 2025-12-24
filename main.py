@@ -90,7 +90,6 @@ if platform == 'android':
 app_dir = os.path.dirname(os.path.abspath(__file__))
 FONT_FILE = os.path.join(app_dir, 'font.ttf')
 custom_font_loaded = False
-# ==========================================
 try:
     if os.path.exists(FONT_FILE) and os.path.isfile(FONT_FILE):
         if DEBUG:
@@ -4316,8 +4315,6 @@ class StockApp(MDApp):
             is_main_doc = prefix in main_doc_prefixes or is_transfer
             has_doc_ref = any((ref in desc for ref in main_doc_prefixes))
             if not is_main_doc and has_doc_ref:
-                continue
-            elif amount == 0 and (not is_transfer):
                 continue
             full_doc_name = self.DOC_TRANSLATIONS.get(prefix, desc)
             bg_col = (0.95, 0.98, 1, 1)
